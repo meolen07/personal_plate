@@ -1,0 +1,13 @@
+<svg width="1024" height="768" viewBox="0 0 1024 768" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1024" height="768" fill="#EDEBD1"/>
+  <rect x="112" y="120" width="800" height="528" rx="32" fill="#F7F6EA" stroke="#D9D4B5" stroke-width="8"/>
+  <circle cx="512" cy="332" r="152" fill="#006747" fill-opacity="0.10"/>
+  <rect x="356" y="232" width="312" height="208" rx="28" fill="#006747"/>
+  <text x="512" y="318" text-anchor="middle" fill="#F5F5EB" font-family="Arial, sans-serif" font-size="44" font-weight="700">CAMLS</text>
+  <text x="512" y="366" text-anchor="middle" fill="#CFC493" font-family="Arial, sans-serif" font-size="24" font-weight="600">PersonalPlate</text>
+  <rect x="372" y="392" width="280" height="6" rx="3" fill="#CFC493" fill-opacity="0.7"/>
+  <rect x="294" y="540" width="436" height="20" rx="10" fill="#006747" fill-opacity="0.18"/>
+  <rect x="356" y="576" width="312" height="16" rx="8" fill="#006747" fill-opacity="0.12"/>
+  <text x="512" y="630" text-anchor="middle" fill="#005432" font-family="Arial, sans-serif" font-size="36" font-weight="700">Recipe Preview</text>
+  <text x="512" y="668" text-anchor="middle" fill="#4B5563" font-family="Arial, sans-serif" font-size="24">AI image unavailable</text>
+</svg>
