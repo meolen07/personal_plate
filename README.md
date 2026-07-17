@@ -114,15 +114,3 @@ PersonalPlate does **not** use mock/fallback data. If the Gemini API is unavaila
 - Quota exceeded → usage limit message
 - Invalid AI response → processing error message
 
-## Branding
-
-USF CAMLS-inspired color palette:
-
-- USF Green `#006747`
-- USF Gold `#CFC493`
-- Dark Green `#005432`
-- Sand `#EDEBD1`
-
-## License
-
-Private — for demonstration purposes.
