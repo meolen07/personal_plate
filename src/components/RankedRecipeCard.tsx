@@ -309,7 +309,7 @@ export function RankedRecipeCard({
               {recipe.title}
             </h3>
             {!expanded && (
-              <p className="mt-1 line-clamp-2 text-sm text-neutral/70">
+              <p className="mt-1 line-clamp-2 whitespace-pre-line text-sm text-neutral/70">
                 {recipe.reason}
               </p>
             )}
@@ -336,7 +336,7 @@ export function RankedRecipeCard({
             <h4 className="mb-1 text-sm font-semibold text-dark-green">
               Why it matches
             </h4>
-            <p className="text-sm leading-relaxed text-neutral/80">
+            <p className="whitespace-pre-line text-sm leading-relaxed text-neutral/80">
               {recipe.reason}
             </p>
           </section>

@@ -127,8 +127,249 @@ Rules:
 - index must refer to a candidate index above
 - sort recipes by score descending (best pantry fit / shortest shopping list first)
 - return between ${MIN_RESULTS} and ${MAX_RESULTS} items when enough candidates exist
-- reason: one concise sentence; ONLY mention an available ingredient if it appears in matchedIngredients; never claim a match that is not listed there
+- reason MUST cover BOTH when data allows: (1) pantry — which matchedIngredients from the available list are used, and (2) profile — why it fits this patient (calories vs target, allergens avoided, diet/cuisine, soft nutrition-goal language). Put pantry first, then profile; separate with a newline or " · "
+- ONLY mention an available ingredient if it appears in matchedIngredients; never claim a pantry match that is not listed there
+- do not invent medical claims; use soft preference language for goals/conditions
 - if available ingredients are listed, do not return recipes with empty matchedIngredients`;
+}
+
+/** Minimal recipe fields needed to explain profile fit. */
+export type RecipeReasonInput = {
+  title?: string;
+  calories: number;
+  protein?: number;
+  carbs?: number;
+  ingredients?: string[];
+  cuisines?: string[];
+  diets?: string[];
+  pricePerServing?: number;
+  sodium?: number;
+};
+
+/** Honest pantry-only sentence — never invents pantry hits. */
+export function buildPantryReason(
+  matched: string[],
+  availableCount: number
+): string {
+  if (availableCount <= 0) {
+    return "";
+  }
+  if (matched.length === 0) {
+    return "Limited pantry overlap — you may need most ingredients for this recipe.";
+  }
+
+  const names = matched
+    .map((m) => ingredientNameCore(m) || m.toLowerCase().trim())
+    .filter(Boolean)
+    .slice(0, 3);
+
+  if (matched.length === 1) {
+    return `Uses ${names[0] ?? "an ingredient"} from your list.`;
+  }
+  return `Uses ${matched.length} ingredients from your list (${names.join(", ")}).`;
+}
+
+function recipeSearchText(recipe: RecipeReasonInput): string {
+  return [
+    recipe.title ?? "",
+    ...(recipe.ingredients ?? []),
+    ...(recipe.cuisines ?? []),
+    ...(recipe.diets ?? []),
+  ]
+    .join(" ")
+    .toLowerCase();
+}
+
+function textMentions(haystack: string, needle: string): boolean {
+  const n = needle.toLowerCase().trim();
+  if (n.length < 2) return false;
+  return haystack.includes(n);
+}
+
+/**
+ * Pick up to 3 concrete profile-fit signals when data supports them.
+ * Soft language only — no medical claims.
+ */
+export function buildProfileReasonParts(
+  recipe: RecipeReasonInput | null,
+  profile: Profile | null
+): string[] {
+  if (!recipe || !profile) return [];
+
+  const parts: string[] = [];
+  const text = recipeSearchText(recipe);
+  const push = (s: string) => {
+    if (parts.length < 3) parts.push(s);
+  };
+
+  const target = profile.target_calories;
+  if (target != null && target > 0 && recipe.calories > 0) {
+    const delta = recipe.calories - target;
+    const abs = Math.abs(delta);
+    if (abs <= Math.max(75, target * 0.15)) {
+      push(`Near your ~${target} kcal meal target`);
+    } else if (delta < 0) {
+      push(`Under your ~${target} kcal meal target`);
+    }
+  }
+
+  const allergies = (profile.allergies ?? [])
+    .map((a) => a.trim())
+    .filter((a) => a.length >= 2);
+  if (allergies.length > 0) {
+    const avoided = allergies.filter((a) => !textMentions(text, a));
+    if (avoided.length === allergies.length) {
+      const shown = avoided.slice(0, 2).map((a) => a.toLowerCase());
+      push(
+        avoided.length === 1
+          ? `Avoids your ${shown[0]} allergy`
+          : `Avoids your listed allergens (${shown.join(", ")})`
+      );
+    }
+  }
+
+  const cuisine = profile.preferred_cuisine?.trim();
+  if (
+    cuisine &&
+    (recipe.cuisines ?? []).some((c) =>
+      c.toLowerCase().includes(cuisine.toLowerCase())
+    )
+  ) {
+    push(`Matches your ${cuisine} cuisine preference`);
+  }
+
+  for (const restriction of profile.dietary_restrictions ?? []) {
+    const r = restriction.trim();
+    if (r.length < 2) continue;
+    const rLower = r.toLowerCase();
+    const dietHit = (recipe.diets ?? []).some(
+      (d) =>
+        d.toLowerCase().includes(rLower) || rLower.includes(d.toLowerCase())
+    );
+    if (dietHit) {
+      push(`Fits your ${rLower} preference`);
+      break;
+    }
+  }
+
+  const goals = (profile.nutrition_goals || "").toLowerCase();
+  const conditions = (profile.medical_conditions ?? [])
+    .join(" ")
+    .toLowerCase();
+  const goalBlob = `${goals} ${conditions}`;
+
+  if (
+    /high[\s-]?protein|more protein|increase protein/.test(goalBlob) &&
+    (recipe.protein ?? 0) >= 25
+  ) {
+    push("Aligns with your high-protein preference");
+  } else if (
+    /low[\s-]?sodium|less sodium|sodium|hypertension|blood pressure/.test(
+      goalBlob
+    ) &&
+    recipe.sodium != null &&
+    recipe.sodium > 0 &&
+    recipe.sodium <= 500
+  ) {
+    push("Aligns with your low-sodium preference");
+  } else if (
+    /low[\s-]?carb|fewer carb|keto/.test(goalBlob) &&
+    (recipe.carbs ?? Infinity) <= 30 &&
+    recipe.calories > 0
+  ) {
+    push("Aligns with your lower-carb preference");
+  }
+
+  if (
+    profile.budget_usd != null &&
+    recipe.pricePerServing != null &&
+    recipe.pricePerServing > 0 &&
+    recipe.pricePerServing <= profile.budget_usd
+  ) {
+    push(`Fits your ~$${profile.budget_usd} meal budget`);
+  }
+
+  for (const food of profile.preferred_foods ?? []) {
+    const f = food.trim();
+    if (f.length >= 2 && textMentions(text, f)) {
+      push(`Includes ${f.toLowerCase()}, which you prefer`);
+      break;
+    }
+  }
+
+  return parts.slice(0, 3);
+}
+
+function composeMatchReason(pantry: string, profileParts: string[]): string {
+  const profile = profileParts.join(" · ");
+  if (pantry && profile) return `${pantry}\n${profile}`;
+  if (pantry) return pantry;
+  if (profile) return profile;
+  return "Selected as a strong match for your health profile.";
+}
+
+/**
+ * Honest reason from pantry matches + profile fit signals.
+ * `missing` is accepted for API symmetry / future use.
+ */
+export function buildMatchReason(
+  recipe: RecipeReasonInput | null,
+  profile: Profile | null,
+  matched: string[],
+  _missing: string[],
+  availableCount: number
+): string {
+  const pantry = buildPantryReason(matched, availableCount);
+  const profileParts = buildProfileReasonParts(recipe, profile);
+  return composeMatchReason(pantry, profileParts);
+}
+
+function looksLikeProfileReason(text: string): boolean {
+  return /\b(calorie|kcal|target|allerg|avoid|cuisine|diet|protein|sodium|budget|prefer|profile|goal|restriction|under your|near your|fits your|aligns with|includes)\b/i.test(
+    text
+  );
+}
+
+/**
+ * Keep Gemini prose only when it does not claim pantry matches we did not compute.
+ * Rebuilds/preserves profile fit when pantry claims are stripped.
+ */
+export function reconcileReason(
+  geminiReason: string | undefined,
+  matched: string[],
+  availableCount: number,
+  recipe: RecipeReasonInput | null = null,
+  profile: Profile | null = null
+): string {
+  const pantry = buildPantryReason(matched, availableCount);
+  const profileParts = buildProfileReasonParts(recipe, profile);
+  const heuristic = composeMatchReason(pantry, profileParts);
+  const trimmed = geminiReason?.trim();
+  if (!trimmed) return heuristic;
+
+  if (availableCount <= 0) {
+    if (profileParts.length > 0 && !looksLikeProfileReason(trimmed)) {
+      return composeMatchReason("", [...profileParts.slice(0, 2), trimmed]);
+    }
+    return trimmed;
+  }
+
+  const claimsPantryUse =
+    /\b(leverage[sd]?|uses?|utilizes?|with your|from your|available|pantry|match(?:es|ed|ing)?|on hand|you have|you already)\b/i.test(
+      trimmed
+    );
+
+  if (matched.length === 0) {
+    if (claimsPantryUse) return heuristic;
+    // Gemini spoke about profile only — keep it beside honest pantry line.
+    return composeMatchReason(pantry, [trimmed]);
+  }
+
+  // Has real matches: keep Gemini, but ensure a profile signal exists when we have one.
+  if (profileParts.length > 0 && !looksLikeProfileReason(trimmed)) {
+    return `${trimmed}\n${profileParts.join(" · ")}`;
+  }
+  return trimmed;
 }
 
 const UNIT_PATTERN =
@@ -246,53 +487,6 @@ export function ingredientsOverlap(
   );
 }
 
-/** Honest reason from real matched/missing — never invents pantry hits. */
-export function buildMatchReason(
-  matched: string[],
-  availableCount: number
-): string {
-  if (availableCount <= 0) {
-    return "Selected as a strong match for your health profile.";
-  }
-  if (matched.length === 0) {
-    return "Limited pantry overlap — you may need most ingredients for this recipe.";
-  }
-
-  const names = matched
-    .map((m) => ingredientNameCore(m) || m.toLowerCase().trim())
-    .filter(Boolean)
-    .slice(0, 3);
-
-  if (matched.length === 1) {
-    return `Uses ${names[0] ?? "an ingredient"} from your list.`;
-  }
-  return `Uses ${matched.length} ingredients from your list (${names.join(", ")}).`;
-}
-
-/**
- * Keep Gemini prose only when it does not claim pantry matches we did not compute.
- */
-export function reconcileReason(
-  geminiReason: string | undefined,
-  matched: string[],
-  availableCount: number
-): string {
-  const heuristic = buildMatchReason(matched, availableCount);
-  const trimmed = geminiReason?.trim();
-  if (!trimmed) return heuristic;
-  if (availableCount <= 0) return trimmed;
-
-  if (matched.length === 0) {
-    const claimsPantryUse =
-      /\b(leverage[sd]?|uses?|utilizes?|with your|from your|available|pantry|match(?:es|ed|ing)?|on hand|you have|you already)\b/i.test(
-        trimmed
-      );
-    return claimsPantryUse ? heuristic : trimmed;
-  }
-
-  return trimmed;
-}
-
 /** matched / (matched + missing). Exported for tests. */
 export function matchCoverageRatio(matched: number, missing: number): number {
   const denom = matched + missing;
@@ -322,7 +516,8 @@ function isStrongPantryFit(r: RankedRecipeRecommendation): boolean {
  */
 export function preferIngredientMatches(
   ranked: RankedRecipeRecommendation[],
-  availableCount: number
+  availableCount: number,
+  profile: Profile | null = null
 ): RankedRecipeRecommendation[] {
   if (availableCount <= 0 || ranked.length === 0) {
     return ranked.slice(0, MAX_RESULTS);
@@ -333,7 +528,19 @@ export function preferIngredientMatches(
     return ranked.slice(0, Math.min(MIN_RESULTS, ranked.length)).map((r) => ({
       ...r,
       score: Math.min(r.score, 12),
-      reason: buildMatchReason([], availableCount),
+      reason: buildMatchReason(
+        {
+          title: r.title,
+          calories: r.calories,
+          protein: r.protein,
+          carbs: r.carbs,
+          ingredients: r.ingredients,
+        },
+        profile,
+        [],
+        r.missingIngredients,
+        availableCount
+      ),
     }));
   }
 
@@ -516,6 +723,18 @@ export function rankRecipesHeuristically(
 
     score = Math.max(0, Math.min(100, score));
 
+    const reasonInput: RecipeReasonInput = {
+      title: candidate.title,
+      calories: candidate.nutrition.calories,
+      protein: candidate.nutrition.protein,
+      carbs: candidate.nutrition.carbs,
+      ingredients: candidate.ingredients,
+      cuisines: candidate.cuisines,
+      diets: candidate.diets,
+      pricePerServing: candidate.pricePerServing,
+      sodium: candidate.nutrition.sodium,
+    };
+
     return {
       id: candidate.id,
       title: candidate.title,
@@ -528,7 +747,13 @@ export function rankRecipesHeuristically(
       readyInMinutes: candidate.readyInMinutes,
       matchedIngredients: matched,
       missingIngredients: missing.slice(0, 12),
-      reason: buildMatchReason(matched, availableIngredients.length),
+      reason: buildMatchReason(
+        reasonInput,
+        profile,
+        matched,
+        missing,
+        availableIngredients.length
+      ),
       instructions: cleanInstructionStrings(candidate.instructions),
       ingredients: Array.isArray(candidate.ingredients)
         ? candidate.ingredients.filter(Boolean)
@@ -538,14 +763,16 @@ export function rankRecipesHeuristically(
 
   return preferIngredientMatches(
     scored.sort((a, b) => b.score - a.score),
-    availableIngredients.length
+    availableIngredients.length,
+    profile
   );
 }
 
 function normalizeRanked(
   data: unknown,
   candidates: SpoonacularRecipeCandidate[],
-  availableIngredients: string[]
+  availableIngredients: string[],
+  profile: Profile | null
 ): RankedRecipeRecommendation[] | null {
   if (!data || typeof data !== "object") return null;
   const recipesRaw = (data as { recipes?: unknown }).recipes;
@@ -578,6 +805,18 @@ function normalizeRanked(
         ? obj.reason.trim()
         : undefined;
 
+    const reasonInput: RecipeReasonInput = {
+      title: candidate.title,
+      calories: candidate.nutrition.calories,
+      protein: candidate.nutrition.protein,
+      carbs: candidate.nutrition.carbs,
+      ingredients: candidate.ingredients,
+      cuisines: candidate.cuisines,
+      diets: candidate.diets,
+      pricePerServing: candidate.pricePerServing,
+      sodium: candidate.nutrition.sodium,
+    };
+
     ranked.push({
       id: candidate.id,
       title: candidate.title,
@@ -593,7 +832,9 @@ function normalizeRanked(
       reason: reconcileReason(
         geminiReason,
         matched,
-        availableIngredients.length
+        availableIngredients.length,
+        reasonInput,
+        profile
       ),
       instructions: cleanInstructionStrings(candidate.instructions),
       ingredients: Array.isArray(candidate.ingredients)
@@ -606,7 +847,8 @@ function normalizeRanked(
 
   return preferIngredientMatches(
     ranked.sort((a, b) => b.score - a.score),
-    availableIngredients.length
+    availableIngredients.length,
+    profile
   );
 }
 
@@ -714,7 +956,8 @@ export async function rankRecipeCandidates(input: {
     const ranked = normalizeRanked(
       parsed,
       limitedCandidates,
-      availableIngredients
+      availableIngredients,
+      profile
     );
 
     if (ranked && ranked.length > 0) {
