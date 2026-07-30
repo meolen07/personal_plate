@@ -104,13 +104,13 @@ describe("buildRecommendResponseCacheKey", () => {
 });
 
 describe("recommend latency knobs", () => {
-  it("exposes lean candidate count and longer e2e cache TTL", async () => {
+  it("exposes fan-out candidate count and longer e2e cache TTL", async () => {
     const {
       RECOMMEND_CANDIDATE_COUNT,
       RECOMMEND_RESPONSE_CACHE_TTL,
       isRecommendUsdaEnabled,
     } = await import("@/lib/recommend");
-    expect(RECOMMEND_CANDIDATE_COUNT).toBe(12);
+    expect(RECOMMEND_CANDIDATE_COUNT).toBe(30);
     expect(RECOMMEND_RESPONSE_CACHE_TTL).toBe(60 * 12);
     expect(isRecommendUsdaEnabled()).toBe(true);
   });

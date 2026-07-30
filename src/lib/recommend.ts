@@ -15,8 +15,8 @@ import type {
   SpoonacularRecipeCandidate,
 } from "@/lib/types";
 
-/** Spoonacular complexSearch size — lean for latency; rank uses top 10. */
-export const RECOMMEND_CANDIDATE_COUNT = 12;
+/** Merged Spoonacular fan-out pool size before rank (unique candidates). */
+export const RECOMMEND_CANDIDATE_COUNT = 30;
 
 /** Whole-response cache TTL (seconds) for identical ingredient + profile queries. */
 export const RECOMMEND_RESPONSE_CACHE_TTL = 60 * 12;
@@ -98,8 +98,9 @@ export function buildRecommendResponseCacheKey(input: {
       .sort(),
     profile: profileCachePayload(input.profile),
     maxReadyTime: input.maxReadyTime ?? null,
-    // Bust response caches that may have stored 0-macro recipes.
-    nutritionV: 3,
+    // Bust response caches that may have stored thin single-query pools.
+    nutritionV: 4,
+    searchFanoutV: 1,
   });
 }
 

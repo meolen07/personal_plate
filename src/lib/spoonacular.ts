@@ -280,10 +280,18 @@ async function spoonacularFetch(
   return payload;
 }
 
-/** Default / clamp for complexSearch — keep lean for recommend latency. */
-export const SPOONACULAR_SEARCH_DEFAULT = 12;
+/**
+ * Default / clamp for complexSearch merge pool after fan-out.
+ * Per-branch size stays smaller (`SPOONACULAR_FANOUT_PER_QUERY`) so parallel
+ * searches stay latency-friendly while unique candidates reach ~30.
+ */
+export const SPOONACULAR_SEARCH_DEFAULT = 30;
 export const SPOONACULAR_SEARCH_MIN = 10;
 export const SPOONACULAR_SEARCH_MAX = 30;
+/** Results requested per fan-out branch (parallel). */
+export const SPOONACULAR_FANOUT_PER_QUERY = 15;
+/** Hard cap on unique candidates after merge/dedupe. */
+export const SPOONACULAR_FANOUT_MERGE_CAP = 30;
 /** Cap ingredients sent to Spoonacular includeIngredients (main items only). */
 export const SPOONACULAR_INGREDIENT_LIMIT = 8;
 
@@ -402,13 +410,212 @@ export function clampSpoonacularSearchNumber(value?: number): number {
   );
 }
 
+/** Normalize titles so near-duplicate recipes collapse across fan-out branches. */
+export function normalizeRecipeTitleForDedupe(title: string): string {
+  return title
+    .toLowerCase()
+    .replace(/&/g, " and ")
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * Alternate ingredient subset for a diversity branch: rotate past the first
+ * dominant item so complexSearch surfaces a different neighborhood of recipes.
+ */
+export function pickAlternateIngredientSubset(ingredients: string[]): string[] {
+  if (ingredients.length <= 3) return ingredients;
+  const rotated = [
+    ...ingredients.slice(1),
+    ingredients[0]!,
+  ];
+  return rotated.slice(0, Math.min(ingredients.length, SPOONACULAR_INGREDIENT_LIMIT));
+}
+
+function compareMinimizeMissing(
+  a: SpoonacularRecipeCandidate,
+  b: SpoonacularRecipeCandidate
+): number {
+  const missA = a.missedIngredientCount ?? Number.POSITIVE_INFINITY;
+  const missB = b.missedIngredientCount ?? Number.POSITIVE_INFINITY;
+  if (missA !== missB) return missA - missB;
+  const usedA = a.usedIngredientCount ?? 0;
+  const usedB = b.usedIngredientCount ?? 0;
+  return usedB - usedA;
+}
+
+/**
+ * Merge fan-out batches: unique by recipe id, then normalized title.
+ * Re-applies minimize-missing / maximize-used ordering after merge.
+ */
+export function mergeSpoonacularCandidates(
+  batches: SpoonacularRecipeCandidate[][],
+  cap = SPOONACULAR_FANOUT_MERGE_CAP
+): SpoonacularRecipeCandidate[] {
+  const seenIds = new Set<number>();
+  const seenTitles = new Set<string>();
+  const merged: SpoonacularRecipeCandidate[] = [];
+
+  for (const batch of batches) {
+    for (const candidate of batch) {
+      if (!candidate || candidate.id <= 0 || !candidate.title) continue;
+      if (seenIds.has(candidate.id)) continue;
+      const titleKey = normalizeRecipeTitleForDedupe(candidate.title);
+      if (titleKey && seenTitles.has(titleKey)) continue;
+
+      seenIds.add(candidate.id);
+      if (titleKey) seenTitles.add(titleKey);
+      merged.push(candidate);
+    }
+  }
+
+  merged.sort(compareMinimizeMissing);
+  const limit = Math.min(
+    Math.max(cap, 1),
+    SPOONACULAR_FANOUT_MERGE_CAP
+  );
+  return merged.slice(0, limit);
+}
+
+type SpoonacularSearchBranch = {
+  branch: string;
+  ingredients: string[];
+  sort: string;
+  ranking?: number;
+  cuisine?: string;
+  type?: string;
+  offset?: number;
+  number: number;
+};
+
+async function searchSpoonacularBranch(input: {
+  branch: SpoonacularSearchBranch;
+  diet?: string;
+  intolerances?: string;
+  maxCalories?: number;
+  minProtein?: number;
+  maxPrice?: number;
+  maxReadyTime?: number;
+}): Promise<SpoonacularRecipeCandidate[]> {
+  const { branch } = input;
+  const ingredients = branch.ingredients;
+  if (ingredients.length === 0) return [];
+
+  const cacheId = cacheKey("spoonacular:search", {
+    branch: branch.branch,
+    ingredients: [...ingredients].sort(),
+    diet: input.diet,
+    intolerances: input.intolerances,
+    cuisine: branch.cuisine,
+    type: branch.type,
+    maxCalories: input.maxCalories,
+    minProtein: input.minProtein,
+    maxPrice: input.maxPrice,
+    number: branch.number,
+    offset: branch.offset ?? 0,
+    maxReadyTime: input.maxReadyTime,
+    ranking: branch.ranking,
+    sort: branch.sort,
+    addRecipeNutrition: true,
+    nutritionV: 4,
+    fanoutV: 1,
+  });
+
+  const cached = await cacheGet<SpoonacularRecipeCandidate[]>(cacheId);
+  if (cached) {
+    return cached;
+  }
+
+  const payload = (await spoonacularFetch("/recipes/complexSearch", {
+    includeIngredients: ingredients.join(","),
+    addRecipeInformation: "true",
+    fillIngredients: "true",
+    addRecipeNutrition: "true",
+    instructionsRequired: "true",
+    number: branch.number,
+    ranking: branch.ranking,
+    // Ignore oil/salt/water etc. in Spoonacular's used/missed counts so staples
+    // do not inflate "missing" and drown out real grocery gaps.
+    ignorePantry: "true",
+    diet: input.diet,
+    intolerances: input.intolerances,
+    cuisine: branch.cuisine,
+    type: branch.type,
+    offset: branch.offset,
+    maxCalories: input.maxCalories,
+    minProtein: input.minProtein,
+    maxPrice: input.maxPrice,
+    maxReadyTime: input.maxReadyTime,
+    sort: branch.sort,
+  })) as { results?: Record<string, unknown>[] };
+
+  const results = Array.isArray(payload.results) ? payload.results : [];
+  const candidates = results
+    .map((raw) => normalizeCandidate(raw))
+    .filter((c) => c.id > 0 && c.title)
+    .sort(compareMinimizeMissing);
+
+  await cacheSet(cacheId, candidates, SEARCH_CACHE_TTL);
+  return candidates;
+}
+
+function buildSpoonacularFanoutBranches(input: {
+  ingredients: string[];
+  cuisine?: string;
+  perQuery: number;
+}): SpoonacularSearchBranch[] {
+  const { ingredients, cuisine, perQuery } = input;
+  const branches: SpoonacularSearchBranch[] = [
+    // A: maximize used pantry ingredients (broad — no cuisine filter).
+    {
+      branch: "max-used",
+      ingredients,
+      sort: "max-used-ingredients",
+      ranking: 1,
+      number: perQuery,
+    },
+  ];
+
+  // B: prefer user's cuisine when set (separate neighborhood from A).
+  if (cuisine) {
+    branches.push({
+      branch: "cuisine",
+      ingredients,
+      sort: "max-used-ingredients",
+      ranking: 1,
+      cuisine,
+      number: perQuery,
+    });
+  }
+
+  // C: different sort + dish type, with rotated ingredient subset for variety.
+  branches.push({
+    branch: "popular-main",
+    ingredients: pickAlternateIngredientSubset(ingredients),
+    sort: "popularity",
+    type: "main course",
+    number: perQuery,
+  });
+
+  return branches;
+}
+
+/**
+ * Multi-query Spoonacular fan-out: 2–3 parallel complexSearch variants,
+ * merged unique by id / normalized title, capped ~30, then
+ * minimize-missing ordered for ranking.
+ */
 export async function searchSpoonacularRecipes(input: {
   ingredients: string[];
   profile: Profile | null;
   number?: number;
   maxReadyTime?: number;
 }): Promise<SpoonacularRecipeCandidate[]> {
-  const number = clampSpoonacularSearchNumber(input.number);
+  const mergeCap = Math.min(
+    clampSpoonacularSearchNumber(input.number),
+    SPOONACULAR_FANOUT_MERGE_CAP
+  );
   const ingredients = trimIngredientsForSpoonacularSearch(
     input.ingredients.map((i) => i.trim().toLowerCase()).filter(Boolean)
   );
@@ -432,66 +639,45 @@ export async function searchSpoonacularRecipes(input: {
     ? Math.round(input.profile.budget_usd * 100)
     : undefined;
 
-  const cacheId = cacheKey("spoonacular:search", {
-    ingredients: [...ingredients].sort(),
-    diet,
-    intolerances,
+  const perQuery = SPOONACULAR_FANOUT_PER_QUERY;
+  const branches = buildSpoonacularFanoutBranches({
+    ingredients,
     cuisine,
-    maxCalories,
-    minProtein,
-    maxPrice,
-    number,
-    maxReadyTime: input.maxReadyTime,
-    ranking: 1,
-    sort: "max-used-ingredients",
-    // Bust caches that may have been stored without nutrition payloads.
-    addRecipeNutrition: true,
-    nutritionV: 3,
+    perQuery,
   });
 
-  const cached = await cacheGet<SpoonacularRecipeCandidate[]>(cacheId);
-  if (cached) {
-    return cached;
+  const settled = await Promise.allSettled(
+    branches.map((branch) =>
+      searchSpoonacularBranch({
+        branch,
+        diet,
+        intolerances,
+        maxCalories,
+        minProtein,
+        maxPrice,
+        maxReadyTime: input.maxReadyTime,
+      })
+    )
+  );
+
+  const batches: SpoonacularRecipeCandidate[][] = [];
+  let firstError: unknown;
+
+  for (const result of settled) {
+    if (result.status === "fulfilled") {
+      batches.push(result.value);
+    } else if (firstError === undefined) {
+      firstError = result.reason;
+    }
   }
 
-  const payload = (await spoonacularFetch("/recipes/complexSearch", {
-    includeIngredients: ingredients.join(","),
-    addRecipeInformation: "true",
-    fillIngredients: "true",
-    addRecipeNutrition: "true",
-    instructionsRequired: "true",
-    number,
-    // Maximize used pantry ingredients (aligns with sort below).
-    ranking: 1,
-    // Ignore oil/salt/water etc. in Spoonacular's used/missed counts so staples
-    // do not inflate "missing" and drown out real grocery gaps.
-    ignorePantry: "true",
-    diet,
-    intolerances,
-    cuisine,
-    maxCalories,
-    minProtein,
-    maxPrice,
-    maxReadyTime: input.maxReadyTime,
-    sort: "max-used-ingredients",
-  })) as { results?: Record<string, unknown>[] };
+  const merged = mergeSpoonacularCandidates(batches, mergeCap);
 
-  const results = Array.isArray(payload.results) ? payload.results : [];
-  const candidates = results
-    .map((raw) => normalizeCandidate(raw))
-    .filter((c) => c.id > 0 && c.title)
-    // After max-used-ingredients fetch: fewest missed first, then most used.
-    .sort((a, b) => {
-      const missA = a.missedIngredientCount ?? Number.POSITIVE_INFINITY;
-      const missB = b.missedIngredientCount ?? Number.POSITIVE_INFINITY;
-      if (missA !== missB) return missA - missB;
-      const usedA = a.usedIngredientCount ?? 0;
-      const usedB = b.usedIngredientCount ?? 0;
-      return usedB - usedA;
-    });
+  if (merged.length === 0 && firstError !== undefined) {
+    throw firstError;
+  }
 
-  await cacheSet(cacheId, candidates, SEARCH_CACHE_TTL);
-  return candidates;
+  return merged;
 }
 
 export async function getSpoonacularRecipeById(

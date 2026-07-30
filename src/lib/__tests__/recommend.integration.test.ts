@@ -149,7 +149,7 @@ describe("recommendRecipes orchestration", () => {
     expect(estimateRecipeNutritionFromUsda).toHaveBeenCalledTimes(1);
     expect(rankRecipeCandidates).toHaveBeenCalled();
     expect(searchSpoonacularRecipes).toHaveBeenCalledWith(
-      expect.objectContaining({ number: 12 })
+      expect.objectContaining({ number: 30 })
     );
     expect(result.recipes[0]).toMatchObject({
       title: "Lemon Salmon",
