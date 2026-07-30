@@ -120,4 +120,4 @@ Local verify before deploy:
 npm test && npm run typecheck && npm run build
 ```
 
-Full setup guide: `HUONG-DAN.md` · English overview: `README.md`.
+Full setup guide: `README.md`.

@@ -87,7 +87,7 @@
 | **Save / history** | Lưu & xem lại | `save-ranked-recipe.ts`; `/history` | — | 4 **DONE** | **extended** |
 | **Types** | Contract TS | `RankedRecipeRecommendation` (+ `id`, `instructions`), … | — | 4–5 **DONE** | **extended** |
 | **Tests** | Regression | Phase 4/5/9 coverage | — | 9 **DONE** | **extended** |
-| **Docs** | Onboarding | `README.md`, `HUONG-DAN.md`, `.env.example` | — | 9 **DONE** | **extended** |
+| **Docs** | Onboarding | `README.md`, `.env.example` | — | 9 **DONE** | **extended** |
 
 ---
 
@@ -200,7 +200,7 @@ AI Suggest (secondary): `AiSuggestPanel` → `/api/generate-recipes` → có th�
 
 - Lint fix: `RankedRecipeCard` ref sync / effect setState
 - Extra regression: save ranked + cooking steps; recommend `id`/`instructions`; detail `503` missing_key
-- Docs: README, HUONG-DAN, reuse map finalized; `.env.example` unchanged (no new vars)
+- Docs: README, reuse map finalized; `.env.example` unchanged (no new vars)
 - Verify: `npm test`, `npm run typecheck`, `npm run lint`
 
 ---

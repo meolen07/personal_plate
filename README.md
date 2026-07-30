@@ -2,8 +2,6 @@
 
 Personalized recipe assistant for safer meal suggestions, ingredient substitutions, profile-aware guidance, and AI video-based fridge/kitchen recommendations.
 
-> **Hướng dẫn tiếng Việt (setup từng bước):** xem [`HUONG-DAN.md`](./HUONG-DAN.md).
-
 > **Medical Disclaimer:** PersonalPlate provides general nutrition support and does not replace medical advice from doctors or registered dietitians.
 
 ## Features
