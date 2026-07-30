@@ -96,6 +96,27 @@ describe("toRecommendedRecipeFromRanked", () => {
     ]);
     expect(mapped.description).toBe(sampleRanked.reason);
   });
+  it("prefers full Spoonacular ingredient lines when present", () => {
+    const mapped = toRecommendedRecipeFromRanked({
+      ...sampleRanked,
+      ingredients: ["2 cups broccoli", "3 cloves garlic", "1 tbsp soy sauce"],
+    });
+
+    expect(mapped.ingredients).toEqual([
+      "2 cups broccoli",
+      "3 cloves garlic",
+      "1 tbsp soy sauce",
+    ]);
+  });
+
+  it("cleans Whatch video junk in cooking steps", () => {
+    const mapped = toRecommendedRecipeFromRanked({
+      ...sampleRanked,
+      instructions: ["Whatch video", "Steam broccoli"],
+    });
+
+    expect(mapped.instructions).toEqual(["Watch video", "Steam broccoli"]);
+  });
 });
 
 describe("normalizeGeneratedRecipeForSave", () => {

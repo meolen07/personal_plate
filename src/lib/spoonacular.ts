@@ -1,4 +1,5 @@
 import { cacheGet, cacheKey, cacheSet } from "@/lib/cache";
+import { cleanInstructionStrings } from "@/lib/recipe-display";
 import type {
   Profile,
   RecipeNutrition,
@@ -91,25 +92,29 @@ function nutrientAmount(
 }
 
 function extractInstructions(recipe: Record<string, unknown>): string[] {
+  let raw: string[] = [];
+
   if (typeof recipe.instructions === "string" && recipe.instructions.trim()) {
-    return recipe.instructions
+    raw = recipe.instructions
       .replace(/<[^>]+>/g, " ")
       .split(/\r?\n|(?<=\.)\s+/)
       .map((s) => s.trim())
       .filter(Boolean);
-  }
-
-  const analyzed = recipe.analyzedInstructions;
-  if (Array.isArray(analyzed) && analyzed[0]) {
-    const first = analyzed[0] as { steps?: Array<{ step?: string }> };
-    if (Array.isArray(first.steps)) {
-      return first.steps
-        .map((step) => (typeof step.step === "string" ? step.step.trim() : ""))
-        .filter(Boolean);
+  } else {
+    const analyzed = recipe.analyzedInstructions;
+    if (Array.isArray(analyzed) && analyzed[0]) {
+      const first = analyzed[0] as { steps?: Array<{ step?: string }> };
+      if (Array.isArray(first.steps)) {
+        raw = first.steps
+          .map((step) =>
+            typeof step.step === "string" ? step.step.trim() : ""
+          )
+          .filter(Boolean);
+      }
     }
   }
 
-  return [];
+  return cleanInstructionStrings(raw);
 }
 
 function extractIngredients(recipe: Record<string, unknown>): string[] {

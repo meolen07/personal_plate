@@ -1,3 +1,4 @@
+import { cleanInstructionStrings } from "@/lib/recipe-display";
 import type {
   RankedRecipeRecommendation,
   RecommendedRecipe,
@@ -29,17 +30,22 @@ export function toRecommendedRecipeFromRanked(
 ): RecommendedRecipe {
   const matched = ranked.matchedIngredients.filter(Boolean);
   const missing = ranked.missingIngredients.filter(Boolean);
-
-  const ingredients = [
-    ...matched,
-    ...missing.map((ing) => `${ing} (needed)`),
-  ];
-
-  const cookingSteps = Array.isArray(ranked.instructions)
-    ? ranked.instructions.filter(
-        (step): step is string => typeof step === "string" && Boolean(step.trim())
+  const fullIngredients = Array.isArray(ranked.ingredients)
+    ? ranked.ingredients.filter(
+        (ing): ing is string => typeof ing === "string" && Boolean(ing.trim())
       )
     : [];
+
+  // Prefer full recipe lines when available; otherwise matched + missing labels.
+  const ingredients =
+    fullIngredients.length > 0
+      ? fullIngredients
+      : [
+          ...matched,
+          ...missing.map((ing) => `${ing} (needed)`),
+        ];
+
+  const cookingSteps = cleanInstructionStrings(ranked.instructions);
 
   const instructions: string[] =
     cookingSteps.length > 0

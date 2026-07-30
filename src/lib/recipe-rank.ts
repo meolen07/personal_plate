@@ -7,6 +7,7 @@ import {
 } from "@/lib/gemini-client";
 import { cacheGet, cacheKey, cacheSet } from "@/lib/cache";
 import { computeBmi } from "@/lib/bmi";
+import { cleanInstructionStrings } from "@/lib/recipe-display";
 import type {
   Profile,
   RankedRecipeRecommendation,
@@ -215,8 +216,9 @@ export function rankRecipesHeuristically(
       matchedIngredients: matched,
       missingIngredients: missing.slice(0, 12),
       reason: `Matches ${matched.length} available ingredient(s) with score ${score} based on profile fit.`,
-      instructions: Array.isArray(candidate.instructions)
-        ? candidate.instructions.filter(Boolean)
+      instructions: cleanInstructionStrings(candidate.instructions),
+      ingredients: Array.isArray(candidate.ingredients)
+        ? candidate.ingredients.filter(Boolean)
         : [],
     } satisfies RankedRecipeRecommendation;
   });
@@ -264,8 +266,9 @@ function normalizeRanked(
         typeof obj.reason === "string" && obj.reason.trim()
           ? obj.reason.trim()
           : "Selected as a strong match for your available ingredients and health profile.",
-      instructions: Array.isArray(candidate.instructions)
-        ? candidate.instructions.filter(Boolean)
+      instructions: cleanInstructionStrings(candidate.instructions),
+      ingredients: Array.isArray(candidate.ingredients)
+        ? candidate.ingredients.filter(Boolean)
         : [],
     });
   }
