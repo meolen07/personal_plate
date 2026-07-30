@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { Alert } from "@/components/Alert";
@@ -8,6 +8,7 @@ import { Button } from "@/components/Button";
 import { Card } from "@/components/Card";
 import { FormField, Input, Select, Textarea } from "@/components/FormField";
 import { LoadingSpinner } from "@/components/LoadingSpinner";
+import { computeBmi } from "@/lib/bmi";
 import { parseCommaSeparated } from "@/lib/utils";
 import type { Profile } from "@/lib/types";
 import { MEDICAL_DISCLAIMER } from "@/lib/types";
@@ -24,15 +25,31 @@ const emptyProfile: Profile = {
   dietary_restrictions: [],
   nutrition_goals: "",
   preferred_cuisine: "",
+  activity_level: "",
+  target_calories: null,
+  budget_usd: null,
+  preferred_foods: [],
+  disliked_foods: [],
 };
 
 export default function ProfilePage() {
   const router = useRouter();
   const [profile, setProfile] = useState<Profile>(emptyProfile);
+  const [heightCm, setHeightCm] = useState<string>("");
+  const [weightKg, setWeightKg] = useState<string>("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
+
+  const bmi = useMemo(
+    () =>
+      computeBmi(
+        heightCm ? Number(heightCm) : null,
+        weightKg ? Number(weightKg) : null
+      ),
+    [heightCm, weightKg]
+  );
 
   useEffect(() => {
     async function loadProfile() {
@@ -53,7 +70,18 @@ export default function ProfilePage() {
         .single();
 
       if (data) {
-        setProfile(data as Profile);
+        const loaded = {
+          ...emptyProfile,
+          ...(data as Profile),
+          preferred_foods: (data as Profile).preferred_foods ?? [],
+          disliked_foods: (data as Profile).disliked_foods ?? [],
+          activity_level: (data as Profile).activity_level ?? "",
+          target_calories: (data as Profile).target_calories ?? null,
+          budget_usd: (data as Profile).budget_usd ?? null,
+        };
+        setProfile(loaded);
+        setHeightCm(loaded.height_cm != null ? String(loaded.height_cm) : "");
+        setWeightKg(loaded.weight_kg != null ? String(loaded.weight_kg) : "");
       }
       setLoading(false);
     }
@@ -81,11 +109,9 @@ export default function ProfilePage() {
     const form = e.target as HTMLFormElement;
     const formData = new FormData(form);
 
-    const profileData = {
+    const profileData: Omit<Profile, "id" | "user_id" | "updated_at"> = {
       full_name: formData.get("full_name") as string,
-      age: formData.get("age")
-        ? Number(formData.get("age"))
-        : null,
+      age: formData.get("age") ? Number(formData.get("age")) : null,
       gender: formData.get("gender") as string,
       height_cm: formData.get("height_cm")
         ? Number(formData.get("height_cm"))
@@ -105,18 +131,43 @@ export default function ProfilePage() {
       ),
       nutrition_goals: formData.get("nutrition_goals") as string,
       preferred_cuisine: formData.get("preferred_cuisine") as string,
-      updated_at: new Date().toISOString(),
+      activity_level: formData.get("activity_level") as string,
+      target_calories: formData.get("target_calories")
+        ? Number(formData.get("target_calories"))
+        : null,
+      budget_usd: formData.get("budget_usd")
+        ? Number(formData.get("budget_usd"))
+        : null,
+      preferred_foods: parseCommaSeparated(
+        formData.get("preferred_foods") as string
+      ),
+      disliked_foods: parseCommaSeparated(
+        formData.get("disliked_foods") as string
+      ),
     };
 
     const { error: upsertError } = await supabase
       .from("profiles")
-      .upsert({ user_id: user.id, ...profileData }, { onConflict: "user_id" });
+      .upsert(
+        {
+          user_id: user.id,
+          ...profileData,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "user_id" }
+      );
 
     if (upsertError) {
       setError(upsertError.message);
     } else {
       setSuccess(true);
       setProfile({ ...profileData });
+      setHeightCm(
+        profileData.height_cm != null ? String(profileData.height_cm) : ""
+      );
+      setWeightKg(
+        profileData.weight_kg != null ? String(profileData.weight_kg) : ""
+      );
     }
 
     setSaving(false);
@@ -199,7 +250,8 @@ export default function ProfilePage() {
                 type="number"
                 min={50}
                 max={250}
-                defaultValue={profile.height_cm ?? ""}
+                value={heightCm}
+                onChange={(e) => setHeightCm(e.target.value)}
                 placeholder="170"
               />
             </FormField>
@@ -212,8 +264,66 @@ export default function ProfilePage() {
                 min={20}
                 max={300}
                 step="0.1"
-                defaultValue={profile.weight_kg ?? ""}
+                value={weightKg}
+                onChange={(e) => setWeightKg(e.target.value)}
                 placeholder="70"
+              />
+            </FormField>
+          </div>
+
+          <div className="rounded-lg border border-light-border bg-soft-bg px-3 py-2 text-sm text-neutral/80">
+            <span className="font-medium text-dark-green">BMI: </span>
+            {bmi.bmi != null ? `${bmi.bmi} (${bmi.label})` : bmi.label}
+            <span className="ml-1 text-xs text-neutral/50">
+              — calculated from height and weight, not stored
+            </span>
+          </div>
+
+          <FormField label="Activity Level" id="activity_level">
+            <Select
+              id="activity_level"
+              name="activity_level"
+              defaultValue={profile.activity_level}
+            >
+              <option value="">Select...</option>
+              <option value="sedentary">Sedentary</option>
+              <option value="lightly_active">Lightly active</option>
+              <option value="moderately_active">Moderately active</option>
+              <option value="very_active">Very active</option>
+              <option value="extra_active">Extra active</option>
+            </Select>
+          </FormField>
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <FormField
+              label="Target Calories (per meal)"
+              id="target_calories"
+              hint="Optional per-meal calorie target for recommendations"
+            >
+              <Input
+                id="target_calories"
+                name="target_calories"
+                type="number"
+                min={100}
+                max={2000}
+                defaultValue={profile.target_calories ?? ""}
+                placeholder="450"
+              />
+            </FormField>
+
+            <FormField
+              label="Budget (USD per meal)"
+              id="budget_usd"
+              hint="Optional spending limit used when ranking recipes"
+            >
+              <Input
+                id="budget_usd"
+                name="budget_usd"
+                type="number"
+                min={0}
+                step="0.01"
+                defaultValue={profile.budget_usd ?? ""}
+                placeholder="8.00"
               />
             </FormField>
           </div>
@@ -267,6 +377,32 @@ export default function ProfilePage() {
               name="dietary_restrictions"
               defaultValue={profile.dietary_restrictions?.join(", ")}
               placeholder="low-sodium, gluten-free"
+            />
+          </FormField>
+
+          <FormField
+            label="Preferred Foods"
+            id="preferred_foods"
+            hint="Comma-separated foods you enjoy"
+          >
+            <Input
+              id="preferred_foods"
+              name="preferred_foods"
+              defaultValue={profile.preferred_foods?.join(", ")}
+              placeholder="salmon, quinoa, leafy greens"
+            />
+          </FormField>
+
+          <FormField
+            label="Disliked Foods"
+            id="disliked_foods"
+            hint="Comma-separated foods to avoid when possible"
+          >
+            <Input
+              id="disliked_foods"
+              name="disliked_foods"
+              defaultValue={profile.disliked_foods?.join(", ")}
+              placeholder="cilantro, mushrooms"
             />
           </FormField>
 

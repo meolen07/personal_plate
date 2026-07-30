@@ -9,6 +9,7 @@ const navLinks = [
   { href: "/profile", label: "Profile" },
   { href: "/fridge", label: "Fridge" },
   { href: "/recommend", label: "Recommend" },
+  { href: "/recommend?tab=ranked", label: "Discover" },
   { href: "/history", label: "History" },
 ];
 

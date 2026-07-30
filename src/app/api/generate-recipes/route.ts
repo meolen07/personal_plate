@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getUser } from "@/lib/auth";
 import { getProfile } from "@/lib/database";
 import { generateRecipeWithGemini, GeminiError } from "@/lib/gemini";
+import { geminiErrorHttpStatus } from "@/lib/gemini-client";
 
 export async function POST(request: Request) {
   const user = await getUser();
@@ -41,16 +42,10 @@ export async function POST(request: Request) {
     return NextResponse.json(result);
   } catch (err) {
     if (err instanceof GeminiError) {
-      const status =
-        err.code === "missing_key"
-          ? 503
-          : err.code === "quota"
-            ? 429
-            : err.code === "invalid_json"
-              ? 502
-              : 500;
-
-      return NextResponse.json({ error: err.message }, { status });
+      return NextResponse.json(
+        { error: err.message },
+        { status: geminiErrorHttpStatus(err.code) }
+      );
     }
     return NextResponse.json(
       {

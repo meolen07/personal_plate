@@ -53,9 +53,14 @@ export default async function DashboardPage() {
           </Card>
 
           <Card title="Quick Actions">
-            <div className="grid gap-3 sm:grid-cols-4">
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              <Link href="/recommend?tab=ranked">
+                <Button className="w-full">Discover Ranked Recipes</Button>
+              </Link>
               <Link href="/recommend">
-                <Button className="w-full">Suggest a Meal</Button>
+                <Button variant="secondary" className="w-full">
+                  Suggest a Meal
+                </Button>
               </Link>
               <Link href="/fridge">
                 <Button variant="secondary" className="w-full">

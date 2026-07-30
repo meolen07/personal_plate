@@ -12,6 +12,11 @@ export interface Profile {
   dietary_restrictions: string[];
   nutrition_goals: string;
   preferred_cuisine: string;
+  activity_level: string;
+  target_calories: number | null;
+  budget_usd: number | null;
+  preferred_foods: string[];
+  disliked_foods: string[];
   updated_at?: string;
 }
 
@@ -65,6 +70,69 @@ export interface SavedRecipe {
   warnings: string[];
   substitutions: Substitution[];
   created_at: string;
+}
+
+export interface DetectedIngredient {
+  name: string;
+  estimated_quantity: string;
+  confidence: number;
+}
+
+export interface IngredientDetectionResult {
+  ingredients: DetectedIngredient[];
+  cooking_method: string;
+  kitchen_tools: string[];
+}
+
+export interface RecipeNutrition {
+  calories: number;
+  protein: number;
+  fat: number;
+  carbs: number;
+  fiber?: number;
+  sodium?: number;
+}
+
+export interface SpoonacularRecipeCandidate {
+  id: number;
+  title: string;
+  image: string;
+  readyInMinutes: number;
+  servings: number;
+  sourceUrl?: string;
+  summary?: string;
+  cuisines: string[];
+  diets: string[];
+  dishTypes: string[];
+  ingredients: string[];
+  instructions: string[];
+  nutrition: RecipeNutrition;
+  pricePerServing?: number;
+  usedIngredientCount?: number;
+  missedIngredientCount?: number;
+}
+
+export interface RankedRecipeRecommendation {
+  id: number;
+  title: string;
+  image: string;
+  score: number;
+  calories: number;
+  protein: number;
+  fat: number;
+  carbs: number;
+  readyInMinutes: number;
+  matchedIngredients: string[];
+  missingIngredients: string[];
+  reason: string;
+  /** Cooking steps from Spoonacular search/detail when available. */
+  instructions: string[];
+}
+
+export interface RecipeRecommendResponse {
+  recipes: RankedRecipeRecommendation[];
+  detection?: IngredientDetectionResult;
+  ingredientsUsed: string[];
 }
 
 export const MEDICAL_DISCLAIMER =

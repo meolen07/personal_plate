@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { getUser } from "@/lib/auth";
 import { saveRecipe } from "@/lib/database";
-import type { RecommendedRecipe, Substitution } from "@/lib/types";
+import { normalizeGeneratedRecipeForSave } from "@/lib/save-ranked-recipe";
+import type { Substitution } from "@/lib/types";
 
 export async function POST(request: Request) {
   const user = await getUser();
@@ -12,9 +13,10 @@ export async function POST(request: Request) {
   let body: {
     desired_dish?: string;
     available_ingredients?: string[];
-    generated_recipe?: RecommendedRecipe;
+    generated_recipe?: unknown;
     warnings?: string[];
     substitutions?: Substitution[];
+    source?: string;
   };
 
   try {
@@ -38,10 +40,18 @@ export async function POST(request: Request) {
     );
   }
 
+  const normalized = normalizeGeneratedRecipeForSave(generated_recipe);
+  if (!normalized) {
+    return NextResponse.json(
+      { error: "Generated recipe payload is invalid." },
+      { status: 400 }
+    );
+  }
+
   const { data, error } = await saveRecipe(user.id, {
     desired_dish,
     available_ingredients: available_ingredients ?? [],
-    generated_recipe,
+    generated_recipe: normalized,
     warnings: warnings ?? [],
     substitutions: substitutions ?? [],
   });
