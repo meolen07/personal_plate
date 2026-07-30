@@ -7,7 +7,6 @@ import { Card } from "@/components/Card";
 import { FormField, Textarea } from "@/components/FormField";
 import { LoadingSpinner } from "@/components/LoadingSpinner";
 import { RecipeResultCard } from "@/components/RecipeResultCard";
-import { VirtualFridge } from "@/components/VirtualFridge";
 import { createClient } from "@/lib/supabase/client";
 import { uploadRecipeImageFromBrowser } from "@/lib/recipe-images-client";
 import { parseCommaSeparated } from "@/lib/utils";
@@ -145,11 +144,6 @@ export function AiSuggestPanel() {
     }
   };
 
-  const handleUseFridgeIngredients = (fridgeItems: string[]) => {
-    setIngredients(fridgeItems.join(", "));
-    setError(null);
-  };
-
   return (
     <>
       <p className="mb-6 text-neutral/70">
@@ -157,8 +151,6 @@ export function AiSuggestPanel() {
         multiple dishes that fit your available ingredients and health profile,
         then flag risks and suggest safer substitutions.
       </p>
-
-      <VirtualFridge compact onUseIngredients={handleUseFridgeIngredients} />
 
       <Card className="mb-8">
         <form onSubmit={handleGenerate} className="space-y-5">

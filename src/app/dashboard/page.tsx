@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { requireUser } from "@/lib/auth";
-import { getFridgeItems, getProfile, getRecipes } from "@/lib/database";
+import { getProfile, getRecipes } from "@/lib/database";
 import { ProfileSummary } from "@/components/ProfileSummary";
 import { Card } from "@/components/Card";
 import { Button } from "@/components/Button";
@@ -12,7 +12,6 @@ export default async function DashboardPage() {
   const user = await requireUser();
   const profile = await getProfile(user.id);
   const recentRecipes = await getRecipes(user.id, 3);
-  const fridgeItems = await getFridgeItems(user.id);
 
   const displayName =
     profile?.full_name || user.user_metadata?.full_name || user.email;
@@ -36,31 +35,10 @@ export default async function DashboardPage() {
         <div className="lg:col-span-2 space-y-6">
           <ProfileSummary profile={profile} />
 
-          <Card
-            title="Virtual Fridge"
-            subtitle="Your saved ingredients live separately from your personalization profile"
-          >
-            <p className="text-sm text-neutral/70">
-              {fridgeItems.length === 0
-                ? "No ingredients saved yet."
-                : `${fridgeItems.length} ingredients currently saved in your fridge.`}
-            </p>
-            <Link href="/fridge" className="mt-4 inline-block">
-              <Button size="sm" variant="secondary">
-                Open Fridge
-              </Button>
-            </Link>
-          </Card>
-
           <Card title="Quick Actions">
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
               <Link href="/recommend">
                 <Button className="w-full">Get Meal Suggestions</Button>
-              </Link>
-              <Link href="/fridge">
-                <Button variant="secondary" className="w-full">
-                  Manage Fridge
-                </Button>
               </Link>
               <Link href="/profile">
                 <Button variant="secondary" className="w-full">
