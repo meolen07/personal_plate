@@ -116,13 +116,25 @@ export function PersonalizedRankPanel() {
   };
 
   const handleDetailLoaded = useCallback(
-    (recipeKey: string, detail: { instructions: string[] }) => {
+    (
+      recipeKey: string,
+      detail: { instructions: string[]; ingredients?: string[] }
+    ) => {
       setRecipes((current) =>
-        current.map((recipe) =>
-          `${recipe.title}-${recipe.score}` === recipeKey
-            ? { ...recipe, instructions: detail.instructions }
-            : recipe
-        )
+        current.map((recipe) => {
+          if (`${recipe.title}-${recipe.score}` !== recipeKey) return recipe;
+          return {
+            ...recipe,
+            instructions:
+              detail.instructions.length > 0
+                ? detail.instructions
+                : recipe.instructions,
+            ingredients:
+              detail.ingredients && detail.ingredients.length > 0
+                ? detail.ingredients
+                : recipe.ingredients,
+          };
+        })
       );
     },
     []
@@ -166,7 +178,7 @@ export function PersonalizedRankPanel() {
           : null;
 
       if (!result || !Array.isArray(result.ingredients)) {
-        setError("Computer vision returned an unexpected response.");
+        setError("Detection returned an unexpected response.");
         return;
       }
 
@@ -184,7 +196,7 @@ export function PersonalizedRankPanel() {
       });
     } catch {
       setError(
-        "Unable to run computer vision right now. Please check your connection and try again."
+        "Unable to detect ingredients right now. Please check your connection and try again."
       );
     } finally {
       setDetecting(false);
@@ -248,9 +260,28 @@ export function PersonalizedRankPanel() {
         ? (data.recipes as RankedRecipeRecommendation[]).map((recipe) => ({
             ...recipe,
             id: typeof recipe.id === "number" ? recipe.id : 0,
+            matchedIngredients: Array.isArray(recipe.matchedIngredients)
+              ? recipe.matchedIngredients.filter(
+                  (ing): ing is string =>
+                    typeof ing === "string" && Boolean(ing.trim())
+                )
+              : [],
+            missingIngredients: Array.isArray(recipe.missingIngredients)
+              ? recipe.missingIngredients.filter(
+                  (ing): ing is string =>
+                    typeof ing === "string" && Boolean(ing.trim())
+                )
+              : [],
             instructions: Array.isArray(recipe.instructions)
               ? recipe.instructions.filter(
-                  (step): step is string => typeof step === "string"
+                  (step): step is string =>
+                    typeof step === "string" && Boolean(step.trim())
+                )
+              : [],
+            ingredients: Array.isArray(recipe.ingredients)
+              ? recipe.ingredients.filter(
+                  (ing): ing is string =>
+                    typeof ing === "string" && Boolean(ing.trim())
                 )
               : [],
           }))
@@ -265,9 +296,6 @@ export function PersonalizedRankPanel() {
         Array.isArray(data.ingredientsUsed)
           ? (data.ingredientsUsed as string[])
           : []
-      );
-      setExpandedRecipe(
-        ranked[0] ? `${ranked[0].title}-${ranked[0].score}` : null
       );
 
       if (ranked.length === 0) {
@@ -331,8 +359,8 @@ export function PersonalizedRankPanel() {
   return (
     <>
       <p className="mb-6 text-neutral/70">
-        Use computer vision on a short kitchen/fridge video to detect
-        ingredients, and/or type them manually. PersonalPlate then searches
+        Upload a short kitchen or fridge video, optionally detect ingredients
+        first, and/or type ingredients manually. PersonalPlate then searches
         Spoonacular candidates, fills nutrition gaps with USDA when needed, and
         ranks the best matches for your health profile.
       </p>
@@ -366,9 +394,9 @@ export function PersonalizedRankPanel() {
       <Card className="mb-8">
         <form onSubmit={handleSubmit} className="space-y-5">
           <FormField
-            label="Computer vision video (optional)"
+            label="Kitchen / fridge video (optional)"
             id="video"
-            hint="Short fridge or cooking clip — mp4, mov, or webm, max about 20MB. Gemini vision extracts ingredients with quantity and confidence."
+            hint="Short fridge or cooking clip — mp4, mov, or webm, max about 20MB. Detect ingredients first to preview name, quantity, and confidence, or let Discover Recipes detect from the clip."
           >
             <Input
               id="video"
@@ -388,10 +416,20 @@ export function PersonalizedRankPanel() {
             )}
           </FormField>
 
+          <Button
+            type="button"
+            variant="secondary"
+            disabled={busy || !videoFile}
+            className="w-full"
+            onClick={() => void handleDetectVideo()}
+          >
+            {detecting ? "Detecting ingredients..." : "Detect ingredients"}
+          </Button>
+
           <FormField
             label="Manual Ingredients (optional)"
             id="ranked-ingredients"
-            hint="Comma-separated. Combined with computer vision detection and fridge when enabled."
+            hint="Comma-separated. You can add detected names from your video, then combine with fridge when enabled."
           >
             <Textarea
               id="ranked-ingredients"
@@ -432,31 +470,28 @@ export function PersonalizedRankPanel() {
             </div>
           </div>
 
-          <div className="grid gap-3 sm:grid-cols-2">
-            <Button
-              type="button"
-              variant="secondary"
-              disabled={busy || !videoFile}
-              className="w-full"
-              onClick={() => void handleDetectVideo()}
-            >
-              {detecting
-                ? "Scanning video..."
-                : "Detect ingredients (computer vision)"}
-            </Button>
-            <Button type="submit" disabled={busy} className="w-full">
-              {loading ? "Finding recipes..." : "Discover Recipes"}
-            </Button>
-          </div>
+          <Button type="submit" disabled={busy} className="w-full">
+            {loading
+              ? videoFile
+                ? "Detecting ingredients and finding recipes..."
+                : "Finding recipes..."
+              : "Discover Recipes"}
+          </Button>
         </form>
       </Card>
 
       {detecting && (
-        <LoadingSpinner message="Running computer vision on your kitchen video..." />
+        <LoadingSpinner message="Detecting ingredients from your kitchen video..." />
       )}
 
       {loading && (
-        <LoadingSpinner message="Reviewing your ingredients and profile to rank personalized recipes..." />
+        <LoadingSpinner
+          message={
+            videoFile
+              ? "Detecting ingredients from your video and ranking personalized recipes..."
+              : "Reviewing your ingredients and profile to rank personalized recipes..."
+          }
+        />
       )}
 
       {error && (
@@ -472,7 +507,7 @@ export function PersonalizedRankPanel() {
       )}
 
       {detection && (
-        <Alert variant="success" title="Computer vision results" className="mb-6">
+        <Alert variant="success" title="Detected from your video" className="mb-6">
           <p className="text-sm">
             Method: {detection.cooking_method || "none visible"}
           </p>
@@ -520,27 +555,32 @@ export function PersonalizedRankPanel() {
       )}
 
       {recipes.length > 0 && (
-        <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
+        <div className="grid items-start gap-6 md:grid-cols-2 xl:grid-cols-3">
           {recipes.map((recipe) => {
             const recipeKey = `${recipe.title}-${recipe.score}`;
+            const expanded = expandedRecipe === recipeKey;
             const saved = savedTitles.includes(recipe.title);
             return (
-              <RankedRecipeCard
+              <div
                 key={recipeKey}
-                recipe={recipe}
-                expanded={expandedRecipe === recipeKey}
-                onToggle={() =>
-                  setExpandedRecipe((current) =>
-                    current === recipeKey ? null : recipeKey
-                  )
-                }
-                onSave={() => handleSave(recipe)}
-                saving={saving}
-                saved={saved}
-                onDetailLoaded={(detail) =>
-                  handleDetailLoaded(recipeKey, detail)
-                }
-              />
+                className={expanded ? "col-span-full" : "w-full"}
+              >
+                <RankedRecipeCard
+                  recipe={recipe}
+                  expanded={expanded}
+                  onToggle={() =>
+                    setExpandedRecipe((current) =>
+                      current === recipeKey ? null : recipeKey
+                    )
+                  }
+                  onSave={() => handleSave(recipe)}
+                  saving={saving}
+                  saved={saved}
+                  onDetailLoaded={(detail) =>
+                    handleDetailLoaded(recipeKey, detail)
+                  }
+                />
+              </div>
             );
           })}
         </div>

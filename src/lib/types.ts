@@ -127,6 +127,11 @@ export interface RankedRecipeRecommendation {
   reason: string;
   /** Cooking steps from Spoonacular search/detail when available. */
   instructions: string[];
+  /**
+   * Full recipe ingredient lines (often with quantities) from Spoonacular.
+   * Distinct from matched/missing name lists used for ranking UX.
+   */
+  ingredients?: string[];
 }
 
 export interface RecipeRecommendResponse {
