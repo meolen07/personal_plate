@@ -123,6 +123,10 @@ export type GeminiContentPart =
 interface GeminiGenerateOptions {
   parts: GeminiContentPart[];
   models?: readonly string[];
+  /** Abort the request after this many ms (falls through to caller on timeout). */
+  timeoutMs?: number;
+  /** Cap JSON response size when set (ranking / structured replies). */
+  maxOutputTokens?: number;
 }
 
 /**
@@ -145,6 +149,15 @@ export async function generateGeminiText(
 
   for (const apiKey of apiKeys) {
     for (const modelName of modelsToTry) {
+      const controller =
+        typeof options.timeoutMs === "number" && options.timeoutMs > 0
+          ? new AbortController()
+          : null;
+      const timer =
+        controller && options.timeoutMs
+          ? setTimeout(() => controller.abort(), options.timeoutMs)
+          : null;
+
       try {
         const response = await fetch(
           `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`,
@@ -171,9 +184,14 @@ export async function generateGeminiText(
               ],
               generationConfig: {
                 responseMimeType: "application/json",
+                ...(typeof options.maxOutputTokens === "number" &&
+                options.maxOutputTokens > 0
+                  ? { maxOutputTokens: options.maxOutputTokens }
+                  : {}),
               },
             }),
             cache: "no-store",
+            signal: controller?.signal,
           }
         );
 
@@ -229,6 +247,17 @@ export async function generateGeminiText(
         lastError = err;
         const message = err instanceof Error ? err.message : String(err);
 
+        // Timeout / abort: stop trying other models so callers can fall back fast.
+        if (
+          (err instanceof Error && err.name === "AbortError") ||
+          message.toLowerCase().includes("aborted")
+        ) {
+          throw new GeminiError(
+            "Gemini ranking timed out.",
+            "api_error"
+          );
+        }
+
         if (shouldTryNextGeminiKeyOrModel(message)) {
           continue;
         }
@@ -237,6 +266,8 @@ export async function generateGeminiText(
           `Unable to generate recommendations right now. ${message}`,
           "api_error"
         );
+      } finally {
+        if (timer) clearTimeout(timer);
       }
     }
 

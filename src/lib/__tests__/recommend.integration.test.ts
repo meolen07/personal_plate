@@ -52,7 +52,7 @@ describe("recommendRecipes orchestration", () => {
     clearMemoryCache();
   });
 
-  it("merges manual + fridge ingredients, enriches nutrition, and ranks", async () => {
+  it("merges manual + fridge ingredients, skips USDA by default, and ranks", async () => {
     vi.stubEnv("SPOONACULAR_API_KEY", "test-spoonacular");
     vi.stubEnv("USDA_API_KEY", "test-usda");
     vi.stubEnv("GEMINI_API_KEY", "test-gemini");
@@ -85,6 +85,14 @@ describe("recommendRecipes orchestration", () => {
         nutrition.carbs <= 0,
     }));
 
+    const estimateRecipeNutritionFromUsda = vi.fn(async () => ({
+      calories: 430,
+      protein: 35,
+      fat: 12,
+      carbs: 38,
+      fiber: 4,
+      sodium: 400,
+    }));
     vi.doMock("@/lib/usda", () => ({
       UsdaError: class UsdaError extends Error {
         code: string;
@@ -93,14 +101,7 @@ describe("recommendRecipes orchestration", () => {
           this.code = code;
         }
       },
-      estimateRecipeNutritionFromUsda: vi.fn(async () => ({
-        calories: 430,
-        protein: 35,
-        fat: 12,
-        carbs: 38,
-        fiber: 4,
-        sodium: 400,
-      })),
+      estimateRecipeNutritionFromUsda,
     }));
 
     vi.doMock("@/lib/recipe-rank", () => ({
@@ -131,7 +132,6 @@ describe("recommendRecipes orchestration", () => {
     }));
 
     const { recommendRecipes } = await import("@/lib/recommend");
-    const { estimateRecipeNutritionFromUsda } = await import("@/lib/usda");
     const { rankRecipeCandidates } = await import("@/lib/recipe-rank");
 
     const result = await recommendRecipes({
@@ -142,16 +142,15 @@ describe("recommendRecipes orchestration", () => {
     });
 
     expect(result.ingredientsUsed).toEqual(["salmon", "lemon", "olive oil"]);
-    expect(estimateRecipeNutritionFromUsda).toHaveBeenCalled();
-    expect(estimateRecipeNutritionFromUsda).toHaveBeenCalledTimes(1);
+    expect(estimateRecipeNutritionFromUsda).not.toHaveBeenCalled();
     expect(rankRecipeCandidates).toHaveBeenCalled();
     expect(searchSpoonacularRecipes).toHaveBeenCalledWith(
-      expect.objectContaining({ number: 20 })
+      expect.objectContaining({ number: 12 })
     );
     expect(result.recipes[0]).toMatchObject({
       title: "Lemon Salmon",
       score: 96,
-      calories: 430,
+      calories: 0,
       reason: "Strong profile fit",
     });
 
@@ -167,10 +166,80 @@ describe("recommendRecipes orchestration", () => {
     expect(rankRecipeCandidates).toHaveBeenCalledTimes(1);
   });
 
+  it("enriches incomplete nutrition via USDA when RECOMMEND_ENABLE_USDA is set", async () => {
+    vi.stubEnv("SPOONACULAR_API_KEY", "test-spoonacular");
+    vi.stubEnv("USDA_API_KEY", "test-usda");
+    vi.stubEnv("GEMINI_API_KEY", "test-gemini");
+    vi.stubEnv("RECOMMEND_ENABLE_USDA", "true");
+
+    const incomplete = makeCandidate({
+      id: 1,
+      title: "Lemon Salmon",
+      nutrition: { calories: 0, protein: 0, fat: 0, carbs: 0 },
+    });
+
+    vi.doMock("@/lib/spoonacular", () => ({
+      searchSpoonacularRecipes: vi.fn(async () => [incomplete]),
+      isNutritionIncomplete: () => true,
+    }));
+
+    const estimateRecipeNutritionFromUsda = vi.fn(async () => ({
+      calories: 430,
+      protein: 35,
+      fat: 12,
+      carbs: 38,
+      fiber: 4,
+      sodium: 400,
+    }));
+    vi.doMock("@/lib/usda", () => ({
+      UsdaError: class UsdaError extends Error {
+        code: string;
+        constructor(message: string, code: string) {
+          super(message);
+          this.code = code;
+        }
+      },
+      estimateRecipeNutritionFromUsda,
+    }));
+
+    vi.doMock("@/lib/recipe-rank", () => ({
+      rankRecipeCandidates: vi.fn(async ({ candidates }) =>
+        candidates.map((candidate: SpoonacularRecipeCandidate) => ({
+          title: candidate.title,
+          image: candidate.image,
+          score: 90,
+          calories: candidate.nutrition.calories,
+          protein: candidate.nutrition.protein,
+          fat: candidate.nutrition.fat,
+          carbs: candidate.nutrition.carbs,
+          readyInMinutes: candidate.readyInMinutes,
+          matchedIngredients: ["salmon"],
+          missingIngredients: [],
+          reason: "ok",
+        }))
+      ),
+    }));
+
+    vi.doMock("@/lib/ingredient-detect", () => ({
+      detectIngredientsFromVideo: vi.fn(),
+    }));
+
+    const { recommendRecipes } = await import("@/lib/recommend");
+    const result = await recommendRecipes({
+      profile: baseProfile,
+      ingredients: ["salmon"],
+      userId: "user-usda-on",
+    });
+
+    expect(estimateRecipeNutritionFromUsda).toHaveBeenCalledTimes(1);
+    expect(result.recipes[0]?.calories).toBe(430);
+  });
+
   it("skips USDA when Spoonacular nutrition is already complete", async () => {
     vi.stubEnv("SPOONACULAR_API_KEY", "test-spoonacular");
     vi.stubEnv("USDA_API_KEY", "test-usda");
     vi.stubEnv("GEMINI_API_KEY", "test-gemini");
+    vi.stubEnv("RECOMMEND_ENABLE_USDA", "true");
 
     const complete = makeCandidate({
       id: 2,

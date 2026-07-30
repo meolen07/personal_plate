@@ -13,14 +13,23 @@ import type {
   SpoonacularRecipeCandidate,
 } from "@/lib/types";
 
-/** Spoonacular complexSearch size — lower = faster; still enough for top-10 rank. */
-export const RECOMMEND_CANDIDATE_COUNT = 20;
+/** Spoonacular complexSearch size — lean for latency; rank uses top 10. */
+export const RECOMMEND_CANDIDATE_COUNT = 12;
 
 /** Whole-response cache TTL (seconds) for identical ingredient + profile queries. */
-export const RECOMMEND_RESPONSE_CACHE_TTL = 60 * 8;
+export const RECOMMEND_RESPONSE_CACHE_TTL = 60 * 12;
 
-/** Cap USDA gap-fills so incomplete batches cannot explode latency. */
-export const MAX_USDA_RECIPE_ENRICHMENTS = 8;
+/**
+ * Cap USDA gap-fills when enabled. Hot path skips USDA by default
+ * (`RECOMMEND_ENABLE_USDA` must be "1" / "true") — multi food lookups dominate latency.
+ */
+export const MAX_USDA_RECIPE_ENRICHMENTS = 3;
+
+/** Whether recommend hot path may call USDA for incomplete Spoonacular nutrition. */
+export function isRecommendUsdaEnabled(): boolean {
+  const raw = process.env.RECOMMEND_ENABLE_USDA?.trim().toLowerCase();
+  return raw === "1" || raw === "true" || raw === "yes";
+}
 
 export function normalizeIngredientList(values: string[]): string[] {
   const seen = new Set<string>();
@@ -85,6 +94,10 @@ export function buildRecommendResponseCacheKey(input: {
 async function enrichNutrition(
   candidates: SpoonacularRecipeCandidate[]
 ): Promise<SpoonacularRecipeCandidate[]> {
+  if (!isRecommendUsdaEnabled()) {
+    return candidates;
+  }
+
   const needsEnrichment = candidates
     .map((candidate, index) => ({ candidate, index }))
     .filter(({ candidate }) => isNutritionIncomplete(candidate.nutrition))

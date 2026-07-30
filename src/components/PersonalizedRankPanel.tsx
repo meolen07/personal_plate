@@ -201,20 +201,27 @@ export function PersonalizedRankPanel() {
     setError(null);
     setEmptyMessage(null);
     setRecipes([]);
-    setDetection(null);
     setIngredientsUsed([]);
     setExpandedRecipe(null);
     setSavedTitles([]);
 
     try {
       const manualIngredients = parseCommaSeparated(ingredients);
+      const detectedNames =
+        detection?.ingredients.map((item) => item.name) ?? [];
+      // Prefer prior Detect result: avoid re-uploading video + re-running Gemini detect.
+      const reuseDetection = detectedNames.length > 0;
+      const ingredientsForRequest = reuseDetection
+        ? mergeIngredientLists(manualIngredients, detectedNames)
+        : manualIngredients;
+      const sendVideo = Boolean(videoFile) && !reuseDetection;
       let response: Response;
 
-      if (videoFile) {
+      if (sendVideo && videoFile) {
         const formData = new FormData();
         formData.append("video", videoFile);
-        if (manualIngredients.length > 0) {
-          formData.append("ingredients", JSON.stringify(manualIngredients));
+        if (ingredientsForRequest.length > 0) {
+          formData.append("ingredients", JSON.stringify(ingredientsForRequest));
         }
         formData.append("includeFridge", "false");
         if (maxReadyTime.trim()) {
@@ -225,11 +232,17 @@ export function PersonalizedRankPanel() {
           body: formData,
         });
       } else {
+        if (ingredientsForRequest.length === 0 && !videoFile) {
+          setError(
+            "Add ingredients manually, detect from a video first, or upload a kitchen video."
+          );
+          return;
+        }
         response = await fetch("/api/recipes/recommend", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            ingredients: manualIngredients,
+            ingredients: ingredientsForRequest,
             includeFridge: false,
             maxReadyTime: maxReadyTime.trim()
               ? Number(maxReadyTime)
@@ -279,11 +292,9 @@ export function PersonalizedRankPanel() {
           }))
         : [];
       setRecipes(ranked);
-      setDetection(
-        data.detection && typeof data.detection === "object"
-          ? (data.detection as IngredientDetectionResult)
-          : null
-      );
+      if (data.detection && typeof data.detection === "object") {
+        setDetection(data.detection as IngredientDetectionResult);
+      }
       setIngredientsUsed(
         Array.isArray(data.ingredientsUsed)
           ? (data.ingredientsUsed as string[])
@@ -353,8 +364,8 @@ export function PersonalizedRankPanel() {
       <p className="mb-6 text-neutral/70">
         Upload a short kitchen video, optionally detect ingredients first,
         and/or type ingredients manually. PersonalPlate then searches
-        Spoonacular candidates, fills nutrition gaps with USDA when needed, and
-        ranks the best matches for your health profile.
+        Spoonacular candidates and ranks the best matches for your health
+        profile. Detecting first skips a second video upload on Discover.
       </p>
 
       {profileChecked && profileReadiness.status === "missing" && (
@@ -393,9 +404,11 @@ export function PersonalizedRankPanel() {
               type="file"
               accept="video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm"
               onChange={(e) => {
+                // New/cleared file → drop stale detect so Discover won't reuse it.
                 setVideoFile(e.target.files?.[0] ?? null);
                 setDetection(null);
                 setEmptyMessage(null);
+                setError(null);
               }}
             />
             {videoFile && (
@@ -448,7 +461,7 @@ export function PersonalizedRankPanel() {
 
           <Button type="submit" disabled={busy} className="w-full">
             {loading
-              ? videoFile
+              ? videoFile && !(detection?.ingredients.length)
                 ? "Detecting ingredients and finding recipes..."
                 : "Finding recipes..."
               : "Discover Recipes"}
@@ -463,7 +476,7 @@ export function PersonalizedRankPanel() {
       {loading && (
         <LoadingSpinner
           message={
-            videoFile
+            videoFile && !(detection?.ingredients.length)
               ? "Detecting ingredients from your video and ranking personalized recipes..."
               : "Reviewing your ingredients and profile to rank personalized recipes..."
           }

@@ -1,8 +1,13 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
+  blendGeminiWithIngredientFit,
   buildMatchReason,
   heuristicMatch,
+  ingredientFitScore,
   ingredientsOverlap,
+  matchCoverageRatio,
+  MAX_SOFT_MISSING,
+  MIN_SOFT_MATCH_RATIO,
   preferIngredientMatches,
   rankRecipesHeuristically,
   reconcileReason,
@@ -148,6 +153,7 @@ describe("preferIngredientMatches", () => {
           id: 2,
           title: "Zucchini Chips",
           matchedIngredients: ["3 Zucchinis, rinsed"],
+          missingIngredients: ["olive oil", "salt"],
           score: 70,
         }),
       ],
@@ -155,6 +161,61 @@ describe("preferIngredientMatches", () => {
     );
     expect(filtered).toHaveLength(1);
     expect(filtered[0].id).toBe(2);
+  });
+
+  it("soft-drops high-missing recipes when stronger pantry fits exist", () => {
+    const strongFits = Array.from({ length: 6 }, (_, i) =>
+      rankedStub({
+        id: i + 1,
+        title: `Strong ${i + 1}`,
+        matchedIngredients: ["chicken", "garlic", "rice"],
+        missingIngredients: ["soy sauce", "sesame oil"],
+        score: 80 - i,
+      })
+    );
+    const weak = rankedStub({
+      id: 99,
+      title: "Zucchini-only feast",
+      matchedIngredients: ["zucchini"],
+      missingIngredients: Array.from({ length: 10 }, (_, i) => `extra-${i}`),
+      score: 95,
+    });
+
+    const filtered = preferIngredientMatches([...strongFits, weak], 3);
+    expect(filtered.every((r) => r.id !== 99)).toBe(true);
+    expect(filtered.length).toBeGreaterThanOrEqual(6);
+    expect(
+      filtered.every(
+        (r) =>
+          matchCoverageRatio(
+            r.matchedIngredients.length,
+            r.missingIngredients.length
+          ) >= MIN_SOFT_MATCH_RATIO &&
+          r.missingIngredients.length <= MAX_SOFT_MISSING
+      )
+    ).toBe(true);
+  });
+
+  it("keeps weak matches when almost no strong fits remain", () => {
+    const weakOnly = [
+      rankedStub({
+        id: 1,
+        title: "Sparse A",
+        matchedIngredients: ["zucchini"],
+        missingIngredients: Array.from({ length: 10 }, (_, i) => `a-${i}`),
+        score: 40,
+      }),
+      rankedStub({
+        id: 2,
+        title: "Sparse B",
+        matchedIngredients: ["zucchini", "onion"],
+        missingIngredients: Array.from({ length: 8 }, (_, i) => `b-${i}`),
+        score: 35,
+      }),
+    ];
+    const filtered = preferIngredientMatches(weakOnly, 2);
+    expect(filtered.length).toBe(2);
+    expect(filtered[0].matchedIngredients.length).toBeGreaterThan(0);
   });
 
   it("keeps a few low-scored recipes when everything is zero-match", () => {
@@ -170,6 +231,33 @@ describe("preferIngredientMatches", () => {
     expect(filtered.every((r) => r.reason.includes("Limited pantry"))).toBe(
       true
     );
+  });
+});
+
+describe("ingredientFitScore", () => {
+  it("ranks 1 match + 10 missing below 3 match + 2 missing", () => {
+    const weak = ingredientFitScore(
+      ["zucchini"],
+      Array.from({ length: 10 }, (_, i) => `miss-${i}`)
+    );
+    const strong = ingredientFitScore(
+      ["chicken", "garlic", "rice"],
+      ["soy sauce", "sesame oil"]
+    );
+    expect(strong).toBeGreaterThan(weak);
+    expect(weak).toBeLessThan(25);
+  });
+});
+
+describe("blendGeminiWithIngredientFit", () => {
+  it("pulls down a high Gemini score for many-missing recipes", () => {
+    const blended = blendGeminiWithIngredientFit(
+      95,
+      ["zucchini"],
+      Array.from({ length: 10 }, (_, i) => `miss-${i}`),
+      2
+    );
+    expect(blended).toBeLessThan(50);
   });
 });
 
@@ -196,6 +284,110 @@ describe("rankRecipesHeuristically", () => {
     expect(ranked[0].instructions).toEqual(["Cook"]);
     expect(ranked[0].score).toBeGreaterThan(ranked[1]?.score ?? -1);
     expect(ranked[0].matchedIngredients.length).toBeGreaterThan(0);
+  });
+
+  it("ranks 1 match + 10 missing below 3 match + 2 missing", () => {
+    const available = ["chicken", "broccoli", "garlic", "rice", "zucchini"];
+    const manyMissing = candidate({
+      id: 1,
+      title: "Zucchini Complex Stew",
+      ingredients: [
+        "zucchini",
+        "cream",
+        "bacon",
+        "cheese",
+        "wine",
+        "stock",
+        "thyme",
+        "shallot",
+        "butter",
+        "flour",
+        "mushroom",
+      ],
+      nutrition: { calories: 450, protein: 20, fat: 20, carbs: 30 },
+      pricePerServing: 8,
+      readyInMinutes: 25,
+      cuisines: ["Mediterranean"],
+    });
+    const fewMissing = candidate({
+      id: 2,
+      title: "Chicken Broccoli Rice",
+      ingredients: ["chicken", "broccoli", "garlic", "rice", "soy sauce", "oil"],
+      nutrition: { calories: 450, protein: 30, fat: 10, carbs: 40 },
+      pricePerServing: 8,
+      readyInMinutes: 25,
+      cuisines: ["Mediterranean"],
+    });
+
+    const ranked = rankRecipesHeuristically(profile, available, [
+      manyMissing,
+      fewMissing,
+    ]);
+
+    expect(ranked[0].id).toBe(2);
+    expect(ranked[0].score).toBeGreaterThan(ranked[1]?.score ?? -1);
+    expect(ranked[0].matchedIngredients.length).toBe(4);
+    expect(ranked[0].missingIngredients.length).toBe(2);
+    expect(ranked[1]?.matchedIngredients.length).toBe(1);
+    expect(ranked[1]?.missingIngredients.length).toBe(10);
+  });
+
+  it("soft-filters high-missing recipes when better alternatives exist", () => {
+    const available = ["chicken", "garlic", "rice", "broccoli", "onion", "tomato"];
+    const strong = Array.from({ length: 6 }, (_, i) =>
+      candidate({
+        id: i + 1,
+        title: `Pantry Bowl ${i + 1}`,
+        ingredients: [
+          "chicken",
+          "garlic",
+          "rice",
+          "broccoli",
+          "soy sauce",
+          "oil",
+        ],
+        nutrition: { calories: 450, protein: 30, fat: 10, carbs: 40 },
+        pricePerServing: 8,
+        readyInMinutes: 20,
+        cuisines: ["Mediterranean"],
+      })
+    );
+    const weak = candidate({
+      id: 99,
+      title: "Onion-only Banquet",
+      ingredients: [
+        "onion",
+        "cream",
+        "bacon",
+        "cheese",
+        "wine",
+        "stock",
+        "pastry",
+        "egg",
+        "butter",
+        "flour",
+        "mushroom",
+      ],
+      nutrition: { calories: 600, protein: 15, fat: 30, carbs: 40 },
+      pricePerServing: 12,
+      readyInMinutes: 45,
+      cuisines: ["Mediterranean"],
+    });
+
+    const ranked = rankRecipesHeuristically(profile, available, [
+      weak,
+      ...strong,
+    ]);
+
+    expect(ranked.every((r) => r.id !== 99)).toBe(true);
+    expect(ranked.length).toBeGreaterThanOrEqual(6);
+    expect(
+      ranked.every(
+        (r) =>
+          r.matchedIngredients.length > 0 &&
+          r.missingIngredients.length <= MAX_SOFT_MISSING
+      )
+    ).toBe(true);
   });
 
   it("ranks recipes with more matched ingredients above those with fewer", () => {
@@ -298,5 +490,31 @@ describe("rankRecipesHeuristically", () => {
     for (let i = 1; i < ranked.length; i += 1) {
       expect(ranked[i - 1].score).toBeGreaterThanOrEqual(ranked[i].score);
     }
+  });
+});
+
+describe("rank latency knobs", () => {
+  it("limits Gemini input and defaults to heuristic-only mode", async () => {
+    const { RANK_INPUT_LIMIT, isHeuristicRankOnly } = await import(
+      "@/lib/recipe-rank"
+    );
+    expect(RANK_INPUT_LIMIT).toBe(10);
+    // Default (unset): skip Gemini on hot path
+    expect(isHeuristicRankOnly()).toBe(true);
+  });
+
+  it("opts into Gemini only when RECOMMEND_RANK_MODE is gemini|ai|full", async () => {
+    const { isHeuristicRankOnly } = await import("@/lib/recipe-rank");
+    vi.stubEnv("RECOMMEND_RANK_MODE", "gemini");
+    expect(isHeuristicRankOnly()).toBe(false);
+    vi.stubEnv("RECOMMEND_RANK_MODE", "ai");
+    expect(isHeuristicRankOnly()).toBe(false);
+    vi.stubEnv("RECOMMEND_RANK_MODE", "full");
+    expect(isHeuristicRankOnly()).toBe(false);
+    vi.stubEnv("RECOMMEND_RANK_MODE", "heuristic");
+    expect(isHeuristicRankOnly()).toBe(true);
+    vi.stubEnv("RECOMMEND_RANK_MODE", "fast");
+    expect(isHeuristicRankOnly()).toBe(true);
+    vi.unstubAllEnvs();
   });
 });

@@ -103,6 +103,24 @@ describe("buildRecommendResponseCacheKey", () => {
   });
 });
 
+describe("recommend latency knobs", () => {
+  it("exposes lean candidate count and longer e2e cache TTL", async () => {
+    const {
+      RECOMMEND_CANDIDATE_COUNT,
+      RECOMMEND_RESPONSE_CACHE_TTL,
+      isRecommendUsdaEnabled,
+    } = await import("@/lib/recommend");
+    expect(RECOMMEND_CANDIDATE_COUNT).toBe(12);
+    expect(RECOMMEND_RESPONSE_CACHE_TTL).toBe(60 * 12);
+    expect(isRecommendUsdaEnabled()).toBe(false);
+  });
+
+  it("defaults RECOMMEND_RANK_MODE to heuristic (Gemini off)", async () => {
+    const { isHeuristicRankOnly } = await import("@/lib/recipe-rank");
+    expect(isHeuristicRankOnly()).toBe(true);
+  });
+});
+
 describe("video mime helpers", () => {
   it("accepts mp4, mov, and webm", () => {
     expect(isAllowedVideoMimeType("video/mp4")).toBe(true);
