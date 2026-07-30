@@ -480,14 +480,14 @@ export async function searchSpoonacularRecipes(input: {
   const candidates = results
     .map((raw) => normalizeCandidate(raw))
     .filter((c) => c.id > 0 && c.title)
-    // Prefer fewer extras when API used/missed counts are present (soft local sort).
+    // After max-used-ingredients fetch: fewest missed first, then most used.
     .sort((a, b) => {
-      const usedA = a.usedIngredientCount ?? 0;
-      const usedB = b.usedIngredientCount ?? 0;
-      if (usedB !== usedA) return usedB - usedA;
       const missA = a.missedIngredientCount ?? Number.POSITIVE_INFINITY;
       const missB = b.missedIngredientCount ?? Number.POSITIVE_INFINITY;
-      return missA - missB;
+      if (missA !== missB) return missA - missB;
+      const usedA = a.usedIngredientCount ?? 0;
+      const usedB = b.usedIngredientCount ?? 0;
+      return usedB - usedA;
     });
 
   await cacheSet(cacheId, candidates, SEARCH_CACHE_TTL);
