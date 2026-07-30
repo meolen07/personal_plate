@@ -8,7 +8,6 @@ import { Card } from "@/components/Card";
 import { FormField, Input, Textarea } from "@/components/FormField";
 import { LoadingSpinner } from "@/components/LoadingSpinner";
 import { RankedRecipeCard } from "@/components/RankedRecipeCard";
-import { VirtualFridge } from "@/components/VirtualFridge";
 import { assessProfileForRanking } from "@/lib/profile-rank-readiness";
 import { toRecommendedRecipeFromRanked } from "@/lib/save-ranked-recipe";
 import { createClient } from "@/lib/supabase/client";
@@ -36,7 +35,6 @@ function mergeIngredientLists(existing: string[], detected: string[]): string[] 
 
 export function PersonalizedRankPanel() {
   const [ingredients, setIngredients] = useState("");
-  const [includeFridge, setIncludeFridge] = useState(true);
   const [maxReadyTime, setMaxReadyTime] = useState("");
   const [videoFile, setVideoFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
@@ -97,12 +95,6 @@ export function PersonalizedRankPanel() {
   const profileReadiness = assessProfileForRanking(profile);
   const busy = loading || detecting;
 
-  const handleUseFridgeIngredients = (fridgeItems: string[]) => {
-    setIngredients(fridgeItems.join(", "));
-    setError(null);
-    setEmptyMessage(null);
-  };
-
   const handleUseDetectedIngredients = () => {
     if (!detection?.ingredients.length) return;
     const detectedNames = detection.ingredients.map((item) => item.name);
@@ -143,7 +135,7 @@ export function PersonalizedRankPanel() {
   const handleDetectVideo = async () => {
     if (!videoFile) {
       setError(
-        "Choose a short kitchen or fridge video first (mp4, mov, or webm)."
+        "Choose a short kitchen video first (mp4, mov, or webm)."
       );
       return;
     }
@@ -224,7 +216,7 @@ export function PersonalizedRankPanel() {
         if (manualIngredients.length > 0) {
           formData.append("ingredients", JSON.stringify(manualIngredients));
         }
-        formData.append("includeFridge", includeFridge ? "true" : "false");
+        formData.append("includeFridge", "false");
         if (maxReadyTime.trim()) {
           formData.append("maxReadyTime", maxReadyTime.trim());
         }
@@ -238,7 +230,7 @@ export function PersonalizedRankPanel() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             ingredients: manualIngredients,
-            includeFridge,
+            includeFridge: false,
             maxReadyTime: maxReadyTime.trim()
               ? Number(maxReadyTime)
               : undefined,
@@ -300,7 +292,7 @@ export function PersonalizedRankPanel() {
 
       if (ranked.length === 0) {
         setEmptyMessage(
-          "No matching recipes were found. Try different ingredients, enable your Virtual Fridge, or upload a clearer kitchen video."
+          "No matching recipes were found. Try different ingredients or upload a clearer kitchen video."
         );
       }
     } catch {
@@ -359,8 +351,8 @@ export function PersonalizedRankPanel() {
   return (
     <>
       <p className="mb-6 text-neutral/70">
-        Upload a short kitchen or fridge video, optionally detect ingredients
-        first, and/or type ingredients manually. PersonalPlate then searches
+        Upload a short kitchen video, optionally detect ingredients first,
+        and/or type ingredients manually. PersonalPlate then searches
         Spoonacular candidates, fills nutrition gaps with USDA when needed, and
         ranks the best matches for your health profile.
       </p>
@@ -389,14 +381,12 @@ export function PersonalizedRankPanel() {
         </Alert>
       )}
 
-      <VirtualFridge compact onUseIngredients={handleUseFridgeIngredients} />
-
       <Card className="mb-8">
         <form onSubmit={handleSubmit} className="space-y-5">
           <FormField
-            label="Kitchen / fridge video (optional)"
+            label="Kitchen video (optional)"
             id="video"
-            hint="Short fridge or cooking clip — mp4, mov, or webm, max about 20MB. Detect ingredients first to preview name, quantity, and confidence, or let Discover Recipes detect from the clip."
+            hint="Short cooking or countertop clip — mp4, mov, or webm, max about 20MB. Detect ingredients first to preview name, quantity, and confidence, or let Discover Recipes detect from the clip."
           >
             <Input
               id="video"
@@ -429,7 +419,7 @@ export function PersonalizedRankPanel() {
           <FormField
             label="Manual Ingredients (optional)"
             id="ranked-ingredients"
-            hint="Comma-separated. You can add detected names from your video, then combine with fridge when enabled."
+            hint="Comma-separated. You can add detected names from your video."
           >
             <Textarea
               id="ranked-ingredients"
@@ -440,35 +430,21 @@ export function PersonalizedRankPanel() {
             />
           </FormField>
 
-          <div className="grid gap-4 sm:grid-cols-2">
-            <FormField
-              label="Max Ready Time (minutes)"
+          <FormField
+            label="Max Ready Time (minutes)"
+            id="maxReadyTime"
+            hint="Optional upper bound for cook time"
+          >
+            <Input
               id="maxReadyTime"
-              hint="Optional upper bound for cook time"
-            >
-              <Input
-                id="maxReadyTime"
-                type="number"
-                min={5}
-                max={240}
-                value={maxReadyTime}
-                onChange={(e) => setMaxReadyTime(e.target.value)}
-                placeholder="35"
-              />
-            </FormField>
-
-            <div className="flex items-end">
-              <label className="flex items-center gap-2 pb-2 text-sm text-neutral/80">
-                <input
-                  type="checkbox"
-                  checked={includeFridge}
-                  onChange={(e) => setIncludeFridge(e.target.checked)}
-                  className="h-4 w-4 rounded border-light-border text-usf-green focus:ring-usf-green"
-                />
-                Include Virtual Fridge ingredients
-              </label>
-            </div>
-          </div>
+              type="number"
+              min={5}
+              max={240}
+              value={maxReadyTime}
+              onChange={(e) => setMaxReadyTime(e.target.value)}
+              placeholder="35"
+            />
+          </FormField>
 
           <Button type="submit" disabled={busy} className="w-full">
             {loading
@@ -541,8 +517,8 @@ export function PersonalizedRankPanel() {
             </>
           ) : (
             <p className="mt-2 text-sm">
-              No edible ingredients were visible. Try a clearer fridge or
-              countertop clip, or type ingredients manually.
+              No edible ingredients were visible. Try a clearer countertop
+              clip, or type ingredients manually.
             </p>
           )}
         </Alert>
