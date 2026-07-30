@@ -9,6 +9,10 @@ import {
 } from "@/lib/recommend";
 import { SpoonacularError } from "@/lib/spoonacular";
 import { UsdaError } from "@/lib/usda";
+import {
+  MAX_VIDEO_BYTES,
+  videoTooLargeMessage,
+} from "@/lib/video-upload";
 
 export const runtime = "nodejs";
 
@@ -95,6 +99,12 @@ export async function POST(request: Request) {
 
       const file = formData.get("video") ?? formData.get("file");
       if (file instanceof File) {
+        if (file.size > MAX_VIDEO_BYTES) {
+          return NextResponse.json(
+            { error: videoTooLargeMessage(file.size) },
+            { status: 400 }
+          );
+        }
         video = {
           buffer: Buffer.from(await file.arrayBuffer()),
           mimeType: file.type || "application/octet-stream",

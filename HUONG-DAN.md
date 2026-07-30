@@ -143,7 +143,7 @@ Không có key này, trang `/recommend` / API `/api/recipes/recommend` sẽ tr�
 1. Đăng ký tại [FoodData Central API](https://fdc.nal.usda.gov/api-key-signup.html)
 2. Gán `USDA_API_KEY`
 
-App vẫn chạy khi thiếu USDA; chỉ bỏ qua bước bổ sung dinh dưỡng khi Spoonacular thiếu data.
+App vẫn chạy khi thiếu USDA (bỏ qua lookup). USDA enrichment **bật mặc định** khi có key; tắt bằng `RECOMMEND_ENABLE_USDA=false` (hoặc `0` / `off`). Cap: tối đa 3 món × 3 nguyên liệu sau Spoonacular.
 
 ### 5.4. Redis (tuỳ chọn)
 
@@ -173,7 +173,8 @@ Mở `.env.local` và điền từng biến:
 | `GEMINI_API_KEY_FALLBACK` | Không | Key Gemini dự phòng khi hết quota |
 | `NEXT_PUBLIC_GEMINI_API_KEY` | Khuyến nghị nếu dùng ảnh | Key Gemini cho tạo ảnh trên browser |
 | `SPOONACULAR_API_KEY` | **Có** (cho Discover/Rank) | Tìm ứng viên món |
-| `USDA_API_KEY` | Không | Bổ sung dinh dưỡng |
+| `USDA_API_KEY` | Không | Bổ sung dinh dưỡng (bật mặc định khi có key) |
+| `RECOMMEND_ENABLE_USDA` | Không | Mặc định bật; `false`/`0`/`off` để tắt USDA |
 | `REDIS_URL` | Không | Cache chia sẻ; để trống = in-memory |
 
 **Không** commit file `.env.local`. Không bịa / hard-code API key giả vào code.
@@ -236,7 +237,7 @@ Sau khi **Save Profile**, pipeline recommend đọc hồ sơ từ Supabase (RLS:
 ### Cách dùng trên UI (khuyến nghị)
 
 1. Vào `/recommend`
-2. Chọn file video (**mp4 / mov / webm**, khoảng tối đa **20MB**)
+2. Chọn file video (**mp4 / mov / webm**, tối đa **~20MB**; trên **Vercel** nên dưới **~4MB** — clip ngắn / độ phân giải thấp)
 3. (Tuỳ chọn) thêm nguyên liệu thủ công + bật **Include Virtual Fridge**
 4. Bấm **Discover Recipes**
 
@@ -350,7 +351,7 @@ npm start
 | `502` invalid AI JSON | Model trả JSON lệch | Thử lại; kiểm tra video rõ nét hơn |
 | `400` “Provide at least one ingredient…” | Không có nguyên liệu nào | Thêm tay, bật fridge, hoặc upload video có đồ ăn |
 | Rank trống / no recipes | Spoonacular không match | Đổi nguyên liệu, bỏ `maxReadyTime` quá thấp |
-| Video reject | Sai định dạng / quá lớn | Dùng mp4/mov/webm ≤ ~20MB |
+| Video reject / lỗi “connection” khi Detect | File quá lớn (hoặc vượt giới hạn body Vercel ~4.5MB) | Dùng mp4/mov/webm ≤ ~20MB; **trên Vercel** nén / quay ngắn hơn **≤ ~4MB** |
 | Redis lỗi kết nối | `REDIS_URL` sai | Sửa URL hoặc để trống để dùng in-memory |
 
 App **không** dùng mock data giả làm đường chính. Khi API ngoài fail, UI/API trả lỗi rõ ràng (trừ heuristic fallback khi Gemini ranking fail sau khi đã có candidates Spoonacular).
