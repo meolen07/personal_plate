@@ -446,7 +446,7 @@ export async function searchSpoonacularRecipes(input: {
     sort: "max-used-ingredients",
     // Bust caches that may have been stored without nutrition payloads.
     addRecipeNutrition: true,
-    nutritionV: 2,
+    nutritionV: 3,
   });
 
   const cached = await cacheGet<SpoonacularRecipeCandidate[]>(cacheId);
@@ -500,7 +500,7 @@ export async function getSpoonacularRecipeById(
   const cacheId = cacheKey("spoonacular:detail", {
     id,
     includeNutrition: true,
-    nutritionV: 2,
+    nutritionV: 3,
   });
   const cached = await cacheGet<SpoonacularRecipeCandidate>(cacheId);
   if (cached) {
@@ -552,9 +552,11 @@ export async function backfillIncompleteNutritionFromSpoonacular(
               ? candidate.ingredients
               : detail.ingredients,
           instructions:
-            candidate.instructions.length > 0
+            candidate.instructions.length >= 2
               ? candidate.instructions
-              : detail.instructions,
+              : detail.instructions.length > 0
+                ? detail.instructions
+                : candidate.instructions,
         });
       } catch {
         // Keep original candidate; USDA may still gap-fill if enabled.

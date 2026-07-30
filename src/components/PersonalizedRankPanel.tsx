@@ -164,11 +164,25 @@ export function PersonalizedRankPanel() {
   const handleDetailLoaded = useCallback(
     (
       recipeKey: string,
-      detail: { instructions: string[]; ingredients?: string[] }
+      detail: {
+        instructions: string[];
+        ingredients?: string[];
+        nutrition?: {
+          calories: number;
+          protein: number;
+          fat: number;
+          carbs: number;
+        };
+      }
     ) => {
       setRecipes((current) =>
         current.map((recipe) => {
           if (`${recipe.title}-${recipe.score}` !== recipeKey) return recipe;
+          const hasMacros =
+            recipe.calories > 0 ||
+            recipe.protein > 0 ||
+            recipe.fat > 0 ||
+            recipe.carbs > 0;
           return {
             ...recipe,
             instructions:
@@ -179,6 +193,14 @@ export function PersonalizedRankPanel() {
               detail.ingredients && detail.ingredients.length > 0
                 ? detail.ingredients
                 : recipe.ingredients,
+            ...(detail.nutrition && !hasMacros
+              ? {
+                  calories: detail.nutrition.calories,
+                  protein: detail.nutrition.protein,
+                  fat: detail.nutrition.fat,
+                  carbs: detail.nutrition.carbs,
+                }
+              : {}),
           };
         })
       );

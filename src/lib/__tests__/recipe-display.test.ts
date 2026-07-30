@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   cleanInstructionStrings,
+  hasEnoughCookingSteps,
+  isBlogFluffStep,
   normalizeDisplayInstructions,
   shouldShowRecipeIngredients,
 } from "@/lib/recipe-display";
@@ -53,6 +55,48 @@ describe("normalizeDisplayInstructions", () => {
       },
     ]);
   });
+
+  it("drops miso-soup-style blog fluff and keeps cooking verbs", () => {
+    const items = normalizeDisplayInstructions([
+      "Bring water to a boil and add miso paste.",
+      "Simmer for 5 minutes, then add tofu and green onions.",
+      "What do you usually add to your Miso Soup?",
+      "Seriously Soupy Serena",
+      "Leave a comment and follow me for more soup ideas!",
+    ]);
+
+    expect(items).toEqual([
+      { kind: "step", text: "Bring water to a boil and add miso paste." },
+      {
+        kind: "step",
+        text: "Simmer for 5 minutes, then add tofu and green onions.",
+      },
+    ]);
+    expect(hasEnoughCookingSteps(items)).toBe(true);
+  });
+
+  it("marks sparse leftover fluff as not enough cooking steps", () => {
+    const items = normalizeDisplayInstructions([
+      "What do you usually add to your Miso Soup?",
+      "Seriously Soupy Serena",
+      "Enjoy!",
+    ]);
+    expect(items).toEqual([]);
+    expect(hasEnoughCookingSteps(items)).toBe(false);
+  });
+});
+
+describe("isBlogFluffStep", () => {
+  it("flags rhetorical questions and author sign-offs", () => {
+    expect(
+      isBlogFluffStep("What do you usually add to your Miso Soup?")
+    ).toBe(true);
+    expect(isBlogFluffStep("Seriously Soupy Serena")).toBe(true);
+    expect(isBlogFluffStep("Follow me for more recipes")).toBe(true);
+    expect(
+      isBlogFluffStep("Add the miso paste and simmer for 5 minutes.")
+    ).toBe(false);
+  });
 });
 
 describe("cleanInstructionStrings", () => {
@@ -60,6 +104,20 @@ describe("cleanInstructionStrings", () => {
     expect(
       cleanInstructionStrings(["Whatch video", "Bake 20 minutes"])
     ).toEqual(["Watch video", "Bake 20 minutes"]);
+  });
+
+  it("strips miso-soup blog fluff from stored steps", () => {
+    expect(
+      cleanInstructionStrings([
+        "Chop the tofu into cubes.",
+        "What do you usually add to your Miso Soup?",
+        "Seriously Soupy Serena",
+        "Add miso and simmer gently.",
+      ])
+    ).toEqual([
+      "Chop the tofu into cubes.",
+      "Add miso and simmer gently.",
+    ]);
   });
 });
 

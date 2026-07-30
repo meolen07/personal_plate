@@ -36,6 +36,12 @@ export async function GET(
       readyInMinutes: recipe.readyInMinutes,
       servings: recipe.servings,
       sourceUrl: recipe.sourceUrl ?? null,
+      nutrition: {
+        calories: recipe.nutrition.calories,
+        protein: recipe.nutrition.protein,
+        fat: recipe.nutrition.fat,
+        carbs: recipe.nutrition.carbs,
+      },
     });
   } catch (err) {
     if (err instanceof SpoonacularError) {

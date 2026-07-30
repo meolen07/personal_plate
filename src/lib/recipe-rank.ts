@@ -610,6 +610,38 @@ function normalizeRanked(
   );
 }
 
+/**
+ * Overlay fresh candidate nutrition / missing detail onto cached ranks so
+ * stale zero-macro gemini:rank entries do not hide Spoonacular/USDA backfill.
+ */
+export function rehydrateRankedFromCandidates(
+  ranked: RankedRecipeRecommendation[],
+  candidates: SpoonacularRecipeCandidate[]
+): RankedRecipeRecommendation[] {
+  const byId = new Map(candidates.map((c) => [c.id, c]));
+
+  return ranked.map((recipe) => {
+    const candidate = byId.get(recipe.id);
+    if (!candidate) return recipe;
+
+    return {
+      ...recipe,
+      calories: candidate.nutrition.calories,
+      protein: candidate.nutrition.protein,
+      fat: candidate.nutrition.fat,
+      carbs: candidate.nutrition.carbs,
+      instructions:
+        recipe.instructions.length > 0
+          ? recipe.instructions
+          : cleanInstructionStrings(candidate.instructions),
+      ingredients:
+        recipe.ingredients && recipe.ingredients.length > 0
+          ? recipe.ingredients
+          : candidate.ingredients,
+    };
+  });
+}
+
 export async function rankRecipeCandidates(input: {
   profile: Profile | null;
   availableIngredients: string[];
@@ -638,11 +670,13 @@ export async function rankRecipeCandidates(input: {
           disliked_foods: profile.disliked_foods,
         }
       : null,
+    // Bust ranks cached with empty macros before nutrition backfill.
+    nutritionV: 3,
   });
 
   const cached = await cacheGet<RankedRecipeRecommendation[]>(cacheId);
-  if (cached) {
-    return cached;
+  if (cached?.length) {
+    return rehydrateRankedFromCandidates(cached, candidates);
   }
 
   const limitedCandidates = candidates.slice(0, RANK_INPUT_LIMIT);
