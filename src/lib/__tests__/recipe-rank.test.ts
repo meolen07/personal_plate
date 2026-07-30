@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import {
   blendGeminiWithIngredientFit,
   buildMatchReason,
+  buildPantryReason,
+  buildProfileReasonParts,
   heuristicMatch,
   ingredientFitScore,
   ingredientsOverlap,
@@ -122,21 +124,120 @@ describe("heuristicMatch", () => {
   });
 });
 
+describe("buildMatchReason", () => {
+  const recipe = {
+    title: "Lemon Salmon",
+    calories: 430,
+    protein: 35,
+    carbs: 20,
+    ingredients: ["salmon", "lemon", "olive oil"],
+    cuisines: ["Mediterranean"],
+    diets: [],
+    pricePerServing: 8,
+  };
+
+  it("combines pantry matches with calorie and allergy profile signals", () => {
+    const reason = buildMatchReason(
+      recipe,
+      profile,
+      ["salmon", "lemon", "olive oil"],
+      [],
+      3
+    );
+    expect(reason).toContain("Uses 3 ingredients from your list");
+    expect(reason.toLowerCase()).toMatch(/kcal|calorie|target/);
+    expect(reason.toLowerCase()).toMatch(/peanut|allergen/);
+  });
+
+  it("returns pantry-only when profile has no usable signals", () => {
+    const bare: Profile = {
+      ...profile,
+      allergies: [],
+      target_calories: null,
+      preferred_cuisine: "",
+      nutrition_goals: "",
+      medical_conditions: [],
+      budget_usd: null,
+      preferred_foods: [],
+      dietary_restrictions: [],
+    };
+    expect(
+      buildMatchReason(recipe, bare, ["salmon"], ["lemon"], 2)
+    ).toBe(buildPantryReason(["salmon"], 2));
+  });
+});
+
+describe("buildProfileReasonParts", () => {
+  it("mentions near-target calories and avoided allergies", () => {
+    const parts = buildProfileReasonParts(
+      {
+        title: "Lemon Salmon",
+        calories: 430,
+        protein: 35,
+        ingredients: ["salmon", "lemon"],
+        cuisines: ["Mediterranean"],
+      },
+      profile
+    );
+    expect(parts.some((p) => /kcal|target/i.test(p))).toBe(true);
+    expect(parts.some((p) => /peanut|allergen/i.test(p))).toBe(true);
+  });
+});
+
 describe("reconcileReason", () => {
   it("replaces Gemini claims when local match is empty", () => {
     const reason = reconcileReason(
       "Leverages the available zucchini",
       [],
-      1
+      1,
+      { title: "Soup", calories: 400, ingredients: ["broth"] },
+      profile
     );
-    expect(reason).toBe(buildMatchReason([], 1));
+    expect(reason).toBe(
+      buildMatchReason(
+        { title: "Soup", calories: 400, ingredients: ["broth"] },
+        profile,
+        [],
+        [],
+        1
+      )
+    );
     expect(reason.toLowerCase()).not.toContain("zucchini");
   });
 
-  it("keeps Gemini reason when matches exist", () => {
+  it("keeps Gemini reason when matches exist and profile is mentioned", () => {
     expect(
-      reconcileReason("Great high-protein fit using salmon.", ["salmon"], 2)
+      reconcileReason(
+        "Great high-protein fit using salmon.",
+        ["salmon"],
+        2,
+        {
+          title: "Salmon Bowl",
+          calories: 430,
+          protein: 35,
+          ingredients: ["salmon"],
+        },
+        profile
+      )
     ).toBe("Great high-protein fit using salmon.");
+  });
+
+  it("appends profile signals when Gemini omits them", () => {
+    const reason = reconcileReason(
+      "Uses salmon from your list.",
+      ["salmon"],
+      2,
+      {
+        title: "Lemon Salmon",
+        calories: 430,
+        protein: 35,
+        ingredients: ["salmon", "lemon"],
+        cuisines: ["Mediterranean"],
+      },
+      profile
+    );
+    expect(reason.startsWith("Uses salmon from your list.")).toBe(true);
+    expect(reason.toLowerCase()).toMatch(/kcal|target|peanut|allergen|cuisine/);
   });
 });
 
@@ -285,6 +386,9 @@ describe("rankRecipesHeuristically", () => {
     expect(ranked[0].instructions).toEqual(["Cook"]);
     expect(ranked[0].score).toBeGreaterThan(ranked[1]?.score ?? -1);
     expect(ranked[0].matchedIngredients.length).toBeGreaterThan(0);
+    expect(ranked[0].reason).toContain("from your list");
+    expect(ranked[0].reason.toLowerCase()).toMatch(/kcal|calorie|target/);
+    expect(ranked[0].reason.toLowerCase()).toMatch(/peanut|allergen/);
   });
 
   it("ranks 1 match + 10 missing below 3 match + 2 missing", () => {
