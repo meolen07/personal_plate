@@ -217,7 +217,7 @@ export async function estimateRecipeNutritionFromUsda(
         )
         .filter((item) => item.length > 1)
     ),
-  ].slice(0, 8);
+  ].slice(0, 5);
 
   if (unique.length === 0) {
     return null;

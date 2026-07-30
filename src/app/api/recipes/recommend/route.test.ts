@@ -117,6 +117,7 @@ describe("POST /api/recipes/recommend", () => {
         ingredients: ["broccoli"],
         fridgeItems: ["garlic"],
         maxReadyTime: 35,
+        userId: "user-1",
       })
     );
   });

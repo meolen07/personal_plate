@@ -21,7 +21,7 @@ export default async function HistoryPage() {
             Recipe History
           </h1>
           <p className="mt-1 text-neutral/70">
-            Your saved AI Suggest and Personalized Rank recipes
+            Your saved meal suggestions
           </p>
         </div>
         <Link href="/recommend">
@@ -37,7 +37,7 @@ export default async function HistoryPage() {
         <div className="text-center">
           <EmptyState
             title="No saved recipes yet"
-            description="Suggest or rank a personalized meal from your ingredients, then save it to build your recipe history."
+            description="Get a personalized meal suggestion from your ingredients, then save it to build your recipe history."
             icon="📖"
           />
           <Link href="/recommend" className="mt-4 inline-block">

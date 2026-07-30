@@ -131,12 +131,12 @@ Nếu tạo tay trên Dashboard:
 
 Dùng cho: sinh món (`/api/generate-recipes`), detect video (`/api/ingredients/detect`), xếp hạng (`/api/recipes/recommend`).
 
-### 5.2. Spoonacular (bắt buộc cho Personalized Rank)
+### 5.2. Spoonacular (bắt buộc cho Recommend)
 
 1. Đăng ký [Spoonacular Food API](https://spoonacular.com/food-api)
 2. Copy API key → `SPOONACULAR_API_KEY`
 
-Không có key này, tab **Personalized Rank** / API `/api/recipes/recommend` sẽ trả lỗi (thường `503`).
+Không có key này, trang `/recommend` / API `/api/recipes/recommend` sẽ trả lỗi (thường `503`).
 
 ### 5.3. USDA (tuỳ chọn)
 
@@ -194,12 +194,10 @@ Luồng kiểm tra nhanh:
 1. **Sign up / Sign in** tại `/login`
 2. Điền **Profile** tại `/profile`
 3. Thêm vài nguyên liệu vào **Fridge** tại `/fridge`
-4. Vào **Recommend** (`/recommend`):
-   - Tab **Personalized Rank** (`/recommend?tab=ranked`) — **đường chính**: Spoonacular + ranking (+ video); Save → History
-   - Tab **AI Suggest** — đường phụ: sinh món bằng Gemini
-5. Expand card Rank để xem instructions (fetch detail nếu thiếu); mở `/history` để xem món đã lưu
+4. Vào **Recommend** (`/recommend`) — Spoonacular + ranking (+ video); Save → History
+5. Expand card để xem instructions (fetch detail nếu thiếu); mở `/history` để xem món đã lưu
 
-Đường dẫn cũ `/discover` tự redirect sang `/recommend?tab=ranked`.
+Đường dẫn cũ `/discover` tự redirect sang `/recommend`.
 
 ---
 
@@ -237,7 +235,7 @@ Sau khi **Save Profile**, pipeline recommend đọc hồ sơ từ Supabase (RLS:
 
 ### Cách dùng trên UI (khuyến nghị)
 
-1. Vào `/recommend` → tab **Personalized Rank**
+1. Vào `/recommend`
 2. Chọn file video (**mp4 / mov / webm**, khoảng tối đa **20MB**)
 3. (Tuỳ chọn) thêm nguyên liệu thủ công + bật **Include Virtual Fridge**
 4. Bấm **Discover Recipes**
@@ -264,9 +262,9 @@ curl -X POST http://localhost:3000/api/ingredients/detect \
 
 ## 11. Nhận gợi ý cá nhân hóa
 
-### A) Personalized Rank — đường chính (Spoonacular + Gemini)
+### Recommend — Spoonacular + Gemini
 
-- URL: `/recommend?tab=ranked` (hoặc menu **Discover**)
+- URL: `/recommend`
 - API: `POST /api/recipes/recommend`
 - Chi tiết món: expand card; nếu thiếu bước nấu → `GET /api/recipes/[id]`
 - Cần: `GEMINI_API_KEY` + `SPOONACULAR_API_KEY` (+ USDA/Redis tuỳ chọn)
@@ -288,12 +286,7 @@ curl -X POST http://localhost:3000/api/recipes/recommend \
 
 Response gồm `id`, `instructions` (khi Spoonacular có), `score`, nutrition, matched/missing ingredients.
 
-### B) AI Suggest — đường phụ (Gemini thuần)
-
-- URL: `/recommend` (tab mặc định)
-- API: `POST /api/generate-recipes`
-- Cần: `GEMINI_API_KEY` (+ key ảnh nếu muốn hình)
-- Cũng có thể lưu món vào History qua cùng `/api/save-recipe`
+API cũ `POST /api/generate-recipes` (Gemini thuần) vẫn còn trong codebase nhưng không còn trên UI Recommend.
 
 ### Phạm vi không làm (đã chốt)
 
@@ -379,7 +372,7 @@ Phần **code** đã sẵn sàng. Bạn vẫn cần tự làm:
 - [ ] `cp .env.example .env.local` và điền giá trị thật
 - [ ] `npm install` → `npm run dev`
 - [ ] Đăng ký user, điền Profile, thêm Fridge
-- [ ] Thử AI Suggest + Personalized Rank (có/không video)
+- [ ] Thử Recommend (có/không video)
 - [ ] (Tuỳ chọn) Deploy Vercel + gắn env production
 
 ---
@@ -391,10 +384,9 @@ Phần **code** đã sẵn sàng. Bạn vẫn cần tự làm:
 | `/login` | Đăng ký / đăng nhập |
 | `/profile` | Hồ sơ sức khỏe & preference recommend |
 | `/fridge` | Virtual Fridge |
-| `/recommend` | Tab AI Suggest |
-| `/recommend?tab=ranked` | Tab Personalized Rank + video (đường chính) |
-| `/history` | Món đã lưu (AI Suggest + Personalized Rank) |
+| `/recommend` | Gợi ý món (Spoonacular + ranking + video) |
+| `/history` | Món đã lưu |
 | `/api/ingredients/detect` | Detect video (API) |
 | `/api/recipes/recommend` | Recommend pipeline (API) |
 | `/api/recipes/[id]` | Chi tiết món Spoonacular (instructions) |
-| `/api/save-recipe` | Lưu món AI Suggest hoặc ranked → History |
+| `/api/save-recipe` | Lưu món ranked → History |

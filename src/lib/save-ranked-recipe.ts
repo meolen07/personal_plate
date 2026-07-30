@@ -47,7 +47,7 @@ export function toRecommendedRecipeFromRanked(
       : [
           ranked.reason.trim()
             ? `Why this matched (score ${ranked.score}/100): ${ranked.reason.trim()}`
-            : `Saved from Personalized Rank (score ${ranked.score}/100).`,
+            : `Saved from meal suggestions (score ${ranked.score}/100).`,
         ];
 
   if (cookingSteps.length === 0) {
@@ -73,7 +73,7 @@ export function toRecommendedRecipeFromRanked(
     title: ranked.title.trim() || "Untitled ranked recipe",
     description: ranked.reason.trim()
       ? ranked.reason.trim()
-      : `Personalized Rank match · score ${ranked.score}/100`,
+      : `Personalized match · score ${ranked.score}/100`,
     image_prompt: "",
     image_url: ranked.image || "",
     servings: 1,

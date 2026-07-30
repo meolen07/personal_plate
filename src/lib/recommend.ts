@@ -1,3 +1,4 @@
+import { cacheGet, cacheKey, cacheSet } from "@/lib/cache";
 import { detectIngredientsFromVideo } from "@/lib/ingredient-detect";
 import { rankRecipeCandidates } from "@/lib/recipe-rank";
 import {
@@ -11,6 +12,15 @@ import type {
   RecipeRecommendResponse,
   SpoonacularRecipeCandidate,
 } from "@/lib/types";
+
+/** Spoonacular complexSearch size — lower = faster; still enough for top-10 rank. */
+export const RECOMMEND_CANDIDATE_COUNT = 20;
+
+/** Whole-response cache TTL (seconds) for identical ingredient + profile queries. */
+export const RECOMMEND_RESPONSE_CACHE_TTL = 60 * 8;
+
+/** Cap USDA gap-fills so incomplete batches cannot explode latency. */
+export const MAX_USDA_RECIPE_ENRICHMENTS = 8;
 
 export function normalizeIngredientList(values: string[]): string[] {
   const seen = new Set<string>();
@@ -35,37 +45,86 @@ export function parseOptionalStringArray(value: unknown): string[] {
   );
 }
 
+/** Stable profile slice used for recommend response cache keys. */
+export function profileCachePayload(profile: Profile | null) {
+  if (!profile) return null;
+  return {
+    allergies: profile.allergies,
+    medical_conditions: profile.medical_conditions,
+    dietary_restrictions: profile.dietary_restrictions,
+    nutrition_goals: profile.nutrition_goals,
+    preferred_cuisine: profile.preferred_cuisine,
+    activity_level: profile.activity_level,
+    target_calories: profile.target_calories,
+    budget_usd: profile.budget_usd,
+    preferred_foods: profile.preferred_foods,
+    disliked_foods: profile.disliked_foods,
+    height_cm: profile.height_cm,
+    weight_kg: profile.weight_kg,
+    age: profile.age,
+    gender: profile.gender,
+  };
+}
+
+export function buildRecommendResponseCacheKey(input: {
+  userId?: string;
+  ingredientsUsed: string[];
+  profile: Profile | null;
+  maxReadyTime?: number;
+}): string {
+  return cacheKey("recommend:response", {
+    userId: input.userId ?? "anonymous",
+    ingredients: [...input.ingredientsUsed]
+      .map((i) => i.toLowerCase())
+      .sort(),
+    profile: profileCachePayload(input.profile),
+    maxReadyTime: input.maxReadyTime ?? null,
+  });
+}
+
 async function enrichNutrition(
   candidates: SpoonacularRecipeCandidate[]
 ): Promise<SpoonacularRecipeCandidate[]> {
-  const enriched = await Promise.all(
-    candidates.map(async (candidate) => {
-      if (!isNutritionIncomplete(candidate.nutrition)) {
-        return candidate;
-      }
+  const needsEnrichment = candidates
+    .map((candidate, index) => ({ candidate, index }))
+    .filter(({ candidate }) => isNutritionIncomplete(candidate.nutrition))
+    .slice(0, MAX_USDA_RECIPE_ENRICHMENTS);
 
+  if (needsEnrichment.length === 0) {
+    return candidates;
+  }
+
+  const enrichedByIndex = new Map<number, SpoonacularRecipeCandidate>();
+
+  await Promise.all(
+    needsEnrichment.map(async ({ candidate, index }) => {
       try {
         const usda = await estimateRecipeNutritionFromUsda(
           candidate.ingredients,
           candidate.servings || 1
         );
         if (!usda) {
-          return candidate;
+          return;
         }
-        return {
+        enrichedByIndex.set(index, {
           ...candidate,
           nutrition: usda,
-        };
+        });
       } catch (err) {
         if (err instanceof UsdaError && err.code === "missing_key") {
-          return candidate;
+          return;
         }
-        return candidate;
       }
     })
   );
 
-  return enriched;
+  if (enrichedByIndex.size === 0) {
+    return candidates;
+  }
+
+  return candidates.map(
+    (candidate, index) => enrichedByIndex.get(index) ?? candidate
+  );
 }
 
 export async function recommendRecipes(input: {
@@ -78,6 +137,7 @@ export async function recommendRecipes(input: {
     fileName?: string;
   };
   maxReadyTime?: number;
+  userId?: string;
 }): Promise<RecipeRecommendResponse> {
   let detection: IngredientDetectionResult | undefined;
 
@@ -100,10 +160,28 @@ export async function recommendRecipes(input: {
     );
   }
 
+  const responseCacheId = buildRecommendResponseCacheKey({
+    userId: input.userId,
+    ingredientsUsed,
+    profile: input.profile,
+    maxReadyTime: input.maxReadyTime,
+  });
+
+  const cached = await cacheGet<RecipeRecommendResponse>(responseCacheId);
+  if (cached?.recipes?.length) {
+    return {
+      recipes: cached.recipes,
+      ingredientsUsed: cached.ingredientsUsed?.length
+        ? cached.ingredientsUsed
+        : ingredientsUsed,
+      detection,
+    };
+  }
+
   const candidates = await searchSpoonacularRecipes({
     ingredients: ingredientsUsed,
     profile: input.profile,
-    number: 40,
+    number: RECOMMEND_CANDIDATE_COUNT,
     maxReadyTime: input.maxReadyTime,
   });
 
@@ -114,11 +192,22 @@ export async function recommendRecipes(input: {
     candidates: withNutrition,
   });
 
-  return {
+  const result: RecipeRecommendResponse = {
     recipes,
     detection,
     ingredientsUsed,
   };
+
+  await cacheSet(
+    responseCacheId,
+    {
+      recipes: result.recipes,
+      ingredientsUsed: result.ingredientsUsed,
+    },
+    RECOMMEND_RESPONSE_CACHE_TTL
+  );
+
+  return result;
 }
 
 export class RecommendValidationError extends Error {

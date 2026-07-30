@@ -51,7 +51,7 @@ function normalizeConfidence(value: unknown): number {
   return Math.max(0, Math.min(1, Math.round(n * 100) / 100));
 }
 
-function normalizeDetection(data: unknown): IngredientDetectionResult {
+export function normalizeDetection(data: unknown): IngredientDetectionResult {
   if (!data || typeof data !== "object") {
     throw new GeminiError(
       "The AI response could not be processed. Please try again.",
