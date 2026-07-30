@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { rankRecipesHeuristically } from "@/lib/recipe-rank";
+import {
+  heuristicMatch,
+  rankRecipesHeuristically,
+} from "@/lib/recipe-rank";
 import type { Profile, SpoonacularRecipeCandidate } from "@/lib/types";
 
 const profile: Profile = {
@@ -39,6 +42,17 @@ function candidate(
   };
 }
 
+describe("heuristicMatch", () => {
+  it("matches pantry items through quantity/unit prefixes", () => {
+    const { matched, missing } = heuristicMatch(
+      ["chicken", "garlic"],
+      ["2 cups chicken breast", "1 tsp garlic", "soy sauce"]
+    );
+    expect(matched).toEqual(["2 cups chicken breast", "1 tsp garlic"]);
+    expect(missing).toEqual(["soy sauce"]);
+  });
+});
+
 describe("rankRecipesHeuristically", () => {
   it("ranks allergen-heavy recipes lower and preferred foods higher", () => {
     const safe = candidate({ id: 1, title: "Lemon Salmon" });
@@ -62,6 +76,42 @@ describe("rankRecipesHeuristically", () => {
     expect(ranked[0].instructions).toEqual(["Cook"]);
     expect(ranked[0].score).toBeGreaterThan(ranked[1].score);
     expect(ranked[0].matchedIngredients.length).toBeGreaterThan(0);
+  });
+
+  it("ranks recipes with more matched ingredients above those with fewer", () => {
+    const available = ["chicken", "broccoli", "garlic", "rice"];
+    const highMatch = candidate({
+      id: 10,
+      title: "Chicken Broccoli Bowl",
+      ingredients: ["chicken", "broccoli", "garlic", "rice"],
+      nutrition: { calories: 450, protein: 30, fat: 10, carbs: 40 },
+      pricePerServing: 8,
+      readyInMinutes: 25,
+      cuisines: ["Mediterranean"],
+    });
+    const lowMatch = candidate({
+      id: 11,
+      title: "Chicken Only Stir Fry",
+      ingredients: ["chicken", "soy sauce", "sesame oil", "ginger"],
+      nutrition: { calories: 450, protein: 30, fat: 10, carbs: 40 },
+      pricePerServing: 8,
+      readyInMinutes: 25,
+      cuisines: ["Mediterranean"],
+    });
+
+    const ranked = rankRecipesHeuristically(profile, available, [
+      lowMatch,
+      highMatch,
+    ]);
+
+    expect(ranked[0].id).toBe(10);
+    expect(ranked[0].matchedIngredients.length).toBeGreaterThan(
+      ranked[1].matchedIngredients.length
+    );
+    expect(ranked[0].score).toBeGreaterThan(ranked[1].score);
+    expect(ranked[0].missingIngredients.length).toBeLessThan(
+      ranked[1].missingIngredients.length
+    );
   });
 
   it("returns at most 10 recipes sorted by score", () => {

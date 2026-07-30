@@ -289,6 +289,8 @@ export async function searchSpoonacularRecipes(input: {
     maxPrice,
     number,
     maxReadyTime: input.maxReadyTime,
+    ranking: 1,
+    sort: "max-used-ingredients",
   });
 
   const cached = await cacheGet<SpoonacularRecipeCandidate[]>(cacheId);
@@ -303,7 +305,8 @@ export async function searchSpoonacularRecipes(input: {
     addRecipeNutrition: "true",
     instructionsRequired: "true",
     number,
-    ranking: 2,
+    // Maximize used pantry ingredients (aligns with sort below).
+    ranking: 1,
     ignorePantry: "true",
     diet,
     intolerances,

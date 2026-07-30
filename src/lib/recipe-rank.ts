@@ -1,7 +1,6 @@
 import {
   GeminiError,
   asNumber,
-  asStringArray,
   generateGeminiText,
   parseGeminiJson,
 } from "@/lib/gemini-client";
@@ -77,13 +76,16 @@ Patient Profile:
 
 ${profileContext}
 
-Available ingredients the patient already has:
+Available ingredients the patient already has (PRIORITY SIGNAL):
 ${availableIngredients.join(", ") || "None listed"}
 
 Candidates (JSON):
 ${JSON.stringify(candidatePayload)}
 
-Rank the best ${MIN_RESULTS}-${MAX_RESULTS} recipes. Prefer strong ingredient match, allergy/diet safety, nutrition goal fit, reasonable cook time, and budget fit. Hard-avoid known allergens and disliked foods when possible.
+PRIMARY goal: maximize use of available ingredients and minimize missing/shopping items.
+Rank the best ${MIN_RESULTS}-${MAX_RESULTS} recipes. Sort best ingredient match first.
+Secondary (only after ingredient fit): allergy/diet safety, nutrition goal fit, cook time, budget.
+Hard-avoid known allergens and disliked foods when possible.
 
 Return ONLY valid JSON:
 {
@@ -99,26 +101,47 @@ Return ONLY valid JSON:
 }
 
 Rules:
-- score is 0-100 relevance
+- score is 0-100 relevance; recipes that use MORE of the available ingredients and need FEWER missing ingredients MUST score higher
+- matchedIngredients = candidate ingredients covered by the available list; missingIngredients = ones the patient still needs
 - index must refer to a candidate index above
-- sort recipes by score descending
+- sort recipes by score descending (best available-ingredient match first)
 - return between ${MIN_RESULTS} and ${MAX_RESULTS} items when enough candidates exist
-- reason: one concise sentence explaining fit`;
+- reason: one concise sentence; mention ingredient match when relevant`;
 }
 
-function heuristicMatch(
+/** Strip amounts/units so "2 cups chicken breast" aligns with "chicken". */
+function ingredientNameCore(ingredient: string): string {
+  return (ingredient.split(",")[0] ?? ingredient)
+    .toLowerCase()
+    .replace(/^[\d./\s-]+/, "")
+    .replace(
+      /\b(cups?|tbsps?|tbsp|tsps?|tsp|tablespoons?|teaspoons?|ounces?|oz|pounds?|lbs?|grams?|kilograms?|kg|ml|liters?|litres?|cloves?|slices?|pieces?|pinch(?:es)?|dash(?:es)?|to taste)\b/g,
+      " "
+    )
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function ingredientsOverlap(available: string, ingredient: string): boolean {
+  const a = available.toLowerCase().trim();
+  const core = ingredientNameCore(ingredient);
+  if (!a || !core) return false;
+  return core.includes(a) || a.includes(core);
+}
+
+/** Exported for tests — matched vs missing against the available pantry list. */
+export function heuristicMatch(
   available: string[],
   ingredients: string[]
 ): { matched: string[]; missing: string[] } {
-  const availableNorm = available.map((a) => a.toLowerCase().trim());
+  const availableNorm = available
+    .map((a) => a.toLowerCase().trim())
+    .filter(Boolean);
   const matched: string[] = [];
   const missing: string[] = [];
 
   for (const ingredient of ingredients) {
-    const lower = ingredient.toLowerCase();
-    const hit = availableNorm.some(
-      (a) => lower.includes(a) || a.includes(lower.split(",")[0]?.trim() ?? "")
-    );
+    const hit = availableNorm.some((a) => ingredientsOverlap(a, ingredient));
     if (hit) {
       matched.push(ingredient);
     } else {
@@ -147,16 +170,22 @@ export function rankRecipesHeuristically(
       candidate.ingredients
     );
 
-    let score = 50;
-    const ingredientRatio =
-      candidate.ingredients.length > 0
-        ? matched.length / candidate.ingredients.length
-        : 0;
-    score += Math.round(ingredientRatio * 30);
+    const totalIngredients = candidate.ingredients.length;
+    const matchRatio =
+      totalIngredients > 0 ? matched.length / totalIngredients : 0;
+    const missingRatio =
+      totalIngredients > 0 ? missing.length / totalIngredients : 1;
+
+    // PRIMARY signal: maximize matched / minimize missing (up to ~70 pts).
+    let score = Math.round(matchRatio * 50);
+    score += Math.min(15, matched.length * 3);
+    score -= Math.round(missingRatio * 15);
+    score -= Math.min(12, missing.length);
 
     const ingredientText = candidate.ingredients.join(" ").toLowerCase();
     const titleLower = candidate.title.toLowerCase();
 
+    // SECONDARY: profile safety and fit (smaller weights).
     for (const allergy of allergies) {
       if (allergy && (ingredientText.includes(allergy) || titleLower.includes(allergy))) {
         score -= 40;
@@ -165,31 +194,31 @@ export function rankRecipesHeuristically(
 
     for (const food of disliked) {
       if (food && (ingredientText.includes(food) || titleLower.includes(food))) {
-        score -= 15;
+        score -= 10;
       }
     }
 
     for (const food of preferred) {
       if (food && (ingredientText.includes(food) || titleLower.includes(food))) {
-        score += 8;
+        score += 5;
       }
     }
 
     if (targetCalories && candidate.nutrition.calories > 0) {
       const delta = Math.abs(candidate.nutrition.calories - targetCalories);
-      score += Math.max(0, 12 - Math.round(delta / 40));
+      score += Math.max(0, 8 - Math.round(delta / 50));
     }
 
     if (budget != null && candidate.pricePerServing != null) {
       if (candidate.pricePerServing <= budget) {
-        score += 8;
+        score += 5;
       } else {
-        score -= 10;
+        score -= 8;
       }
     }
 
     if (candidate.readyInMinutes > 0 && candidate.readyInMinutes <= 30) {
-      score += 5;
+      score += 3;
     }
 
     if (
@@ -198,7 +227,7 @@ export function rankRecipesHeuristically(
         c.toLowerCase().includes(profile.preferred_cuisine.toLowerCase())
       )
     ) {
-      score += 6;
+      score += 4;
     }
 
     score = Math.max(0, Math.min(100, score));
@@ -215,7 +244,7 @@ export function rankRecipesHeuristically(
       readyInMinutes: candidate.readyInMinutes,
       matchedIngredients: matched,
       missingIngredients: missing.slice(0, 12),
-      reason: `Matches ${matched.length} available ingredient(s) with score ${score} based on profile fit.`,
+      reason: `Uses ${matched.length}/${totalIngredients || matched.length} available ingredient(s); ${missing.length} missing.`,
       instructions: cleanInstructionStrings(candidate.instructions),
       ingredients: Array.isArray(candidate.ingredients)
         ? candidate.ingredients.filter(Boolean)
@@ -246,9 +275,11 @@ function normalizeRanked(
     const candidate = candidates[index];
     if (!candidate) continue;
 
-    const fallback = heuristicMatch(availableIngredients, candidate.ingredients);
-    const matched = asStringArray(obj.matchedIngredients);
-    const missing = asStringArray(obj.missingIngredients);
+    // Always recompute matched/missing locally for accuracy (Gemini may drift).
+    const { matched, missing } = heuristicMatch(
+      availableIngredients,
+      candidate.ingredients
+    );
 
     ranked.push({
       id: candidate.id,
@@ -260,8 +291,8 @@ function normalizeRanked(
       fat: candidate.nutrition.fat,
       carbs: candidate.nutrition.carbs,
       readyInMinutes: candidate.readyInMinutes,
-      matchedIngredients: matched.length ? matched : fallback.matched,
-      missingIngredients: missing.length ? missing : fallback.missing.slice(0, 12),
+      matchedIngredients: matched,
+      missingIngredients: missing.slice(0, 12),
       reason:
         typeof obj.reason === "string" && obj.reason.trim()
           ? obj.reason.trim()
