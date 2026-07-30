@@ -40,6 +40,7 @@ export function PersonalizedRankPanel() {
   const [maxReadyTime, setMaxReadyTime] = useState("");
   const [videoFile, setVideoFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
+  const [detecting, setDetecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [emptyMessage, setEmptyMessage] = useState<string | null>(null);
   const [recipes, setRecipes] = useState<RankedRecipeRecommendation[]>([]);
@@ -94,6 +95,7 @@ export function PersonalizedRankPanel() {
   }, []);
 
   const profileReadiness = assessProfileForRanking(profile);
+  const busy = loading || detecting;
 
   const handleUseFridgeIngredients = (fridgeItems: string[]) => {
     setIngredients(fridgeItems.join(", "));
@@ -125,6 +127,69 @@ export function PersonalizedRankPanel() {
     },
     []
   );
+
+  const handleDetectVideo = async () => {
+    if (!videoFile) {
+      setError(
+        "Choose a short kitchen or fridge video first (mp4, mov, or webm)."
+      );
+      return;
+    }
+
+    setDetecting(true);
+    setError(null);
+    setEmptyMessage(null);
+    setDetection(null);
+
+    try {
+      const formData = new FormData();
+      formData.append("video", videoFile);
+
+      const response = await fetch("/api/ingredients/detect", {
+        method: "POST",
+        body: formData,
+      });
+      const data = await response.json();
+
+      if (!response.ok) {
+        setError(
+          typeof data.error === "string"
+            ? data.error
+            : "Failed to detect ingredients from video."
+        );
+        return;
+      }
+
+      const result =
+        data && typeof data === "object"
+          ? (data as IngredientDetectionResult)
+          : null;
+
+      if (!result || !Array.isArray(result.ingredients)) {
+        setError("Detection returned an unexpected response.");
+        return;
+      }
+
+      setDetection({
+        ingredients: result.ingredients,
+        cooking_method:
+          typeof result.cooking_method === "string"
+            ? result.cooking_method
+            : "none visible",
+        kitchen_tools: Array.isArray(result.kitchen_tools)
+          ? result.kitchen_tools.filter(
+              (tool): tool is string => typeof tool === "string"
+            )
+          : [],
+      });
+    } catch {
+      setError(
+        "Unable to detect ingredients right now. Please check your connection and try again."
+      );
+    } finally {
+      setDetecting(false);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -263,10 +328,10 @@ export function PersonalizedRankPanel() {
   return (
     <>
       <p className="mb-6 text-neutral/70">
-        Upload a short kitchen or fridge video and/or type ingredients manually.
-        PersonalPlate detects what&apos;s in the clip when you discover recipes,
-        searches Spoonacular candidates, fills nutrition gaps with USDA when
-        needed, and ranks the best matches for your health profile.
+        Upload a short kitchen or fridge video, optionally detect ingredients
+        first, and/or type ingredients manually. PersonalPlate then searches
+        Spoonacular candidates, fills nutrition gaps with USDA when needed, and
+        ranks the best matches for your health profile.
       </p>
 
       {profileChecked && profileReadiness.status === "missing" && (
@@ -300,7 +365,7 @@ export function PersonalizedRankPanel() {
           <FormField
             label="Kitchen / fridge video (optional)"
             id="video"
-            hint="Short fridge or cooking clip — mp4, mov, or webm, max about 20MB. Discover Recipes will detect ingredients (with quantity and confidence) from your clip."
+            hint="Short fridge or cooking clip — mp4, mov, or webm, max about 20MB. Detect ingredients first to preview name, quantity, and confidence, or let Discover Recipes detect from the clip."
           >
             <Input
               id="video"
@@ -320,10 +385,20 @@ export function PersonalizedRankPanel() {
             )}
           </FormField>
 
+          <Button
+            type="button"
+            variant="secondary"
+            disabled={busy || !videoFile}
+            className="w-full"
+            onClick={() => void handleDetectVideo()}
+          >
+            {detecting ? "Detecting ingredients..." : "Detect ingredients"}
+          </Button>
+
           <FormField
             label="Manual Ingredients (optional)"
             id="ranked-ingredients"
-            hint="Comma-separated. Combined with ingredients detected from your video and fridge when enabled."
+            hint="Comma-separated. You can add detected names from your video, then combine with fridge when enabled."
           >
             <Textarea
               id="ranked-ingredients"
@@ -364,7 +439,7 @@ export function PersonalizedRankPanel() {
             </div>
           </div>
 
-          <Button type="submit" disabled={loading} className="w-full">
+          <Button type="submit" disabled={busy} className="w-full">
             {loading
               ? videoFile
                 ? "Detecting ingredients and finding recipes..."
@@ -373,6 +448,10 @@ export function PersonalizedRankPanel() {
           </Button>
         </form>
       </Card>
+
+      {detecting && (
+        <LoadingSpinner message="Detecting ingredients from your kitchen video..." />
+      )}
 
       {loading && (
         <LoadingSpinner
