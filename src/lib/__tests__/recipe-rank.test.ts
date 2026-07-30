@@ -11,6 +11,7 @@ import {
   preferIngredientMatches,
   rankRecipesHeuristically,
   reconcileReason,
+  rehydrateRankedFromCandidates,
   singularizeToken,
 } from "@/lib/recipe-rank";
 import type { Profile, RankedRecipeRecommendation, SpoonacularRecipeCandidate } from "@/lib/types";
@@ -516,5 +517,48 @@ describe("rank latency knobs", () => {
     vi.stubEnv("RECOMMEND_RANK_MODE", "fast");
     expect(isHeuristicRankOnly()).toBe(true);
     vi.unstubAllEnvs();
+  });
+});
+
+describe("rehydrateRankedFromCandidates", () => {
+  it("overlays fresh candidate macros onto cached zero-nutrition ranks", () => {
+    const ranked: RankedRecipeRecommendation[] = [
+      {
+        id: 1,
+        title: "Miso Soup",
+        image: "",
+        score: 80,
+        calories: 0,
+        protein: 0,
+        fat: 0,
+        carbs: 0,
+        readyInMinutes: 15,
+        matchedIngredients: ["tofu"],
+        missingIngredients: [],
+        reason: "Uses tofu",
+        instructions: [],
+        ingredients: [],
+      },
+    ];
+
+    const hydrated = rehydrateRankedFromCandidates(ranked, [
+      candidate({
+        id: 1,
+        title: "Miso Soup",
+        nutrition: { calories: 180, protein: 12, fat: 6, carbs: 14 },
+        instructions: ["Add miso and simmer.", "Serve hot."],
+        ingredients: ["tofu", "miso"],
+      }),
+    ]);
+
+    expect(hydrated[0]).toMatchObject({
+      calories: 180,
+      protein: 12,
+      fat: 6,
+      carbs: 14,
+      instructions: ["Add miso and simmer.", "Serve hot."],
+      ingredients: ["tofu", "miso"],
+      score: 80,
+    });
   });
 });

@@ -80,6 +80,12 @@ describe("GET /api/recipes/[id]", () => {
       readyInMinutes: 25,
       servings: 2,
       sourceUrl: "https://example.com/source",
+      nutrition: {
+        calories: 430,
+        protein: 35,
+        fat: 12,
+        carbs: 20,
+      },
     });
   });
 

@@ -99,7 +99,7 @@ export function buildRecommendResponseCacheKey(input: {
     profile: profileCachePayload(input.profile),
     maxReadyTime: input.maxReadyTime ?? null,
     // Bust response caches that may have stored 0-macro recipes.
-    nutritionV: 2,
+    nutritionV: 3,
   });
 }
 

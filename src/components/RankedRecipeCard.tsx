@@ -5,6 +5,7 @@ import { Button } from "./Button";
 import { Card } from "./Card";
 import { RecipeImage } from "./RecipeImage";
 import {
+  hasEnoughCookingSteps,
   normalizeDisplayInstructions,
   shouldShowRecipeIngredients,
   type DisplayInstruction,
@@ -21,6 +22,12 @@ interface RankedRecipeCardProps {
   onDetailLoaded?: (detail: {
     instructions: string[];
     ingredients?: string[];
+    nutrition?: {
+      calories: number;
+      protein: number;
+      fat: number;
+      carbs: number;
+    };
   }) => void;
 }
 
@@ -56,6 +63,65 @@ function IngredientTags({
   );
 }
 
+function NutritionSummary({ recipe }: { recipe: RankedRecipeRecommendation }) {
+  if (!hasDisplayableNutrition(recipe)) {
+    return (
+      <span className="rounded-full bg-sand px-3 py-1 text-neutral/60">
+        Nutrition unavailable
+      </span>
+    );
+  }
+
+  return (
+    <>
+      <span className="rounded-full bg-sand px-3 py-1 text-neutral/80">
+        {recipe.calories} kcal
+      </span>
+      <span className="rounded-full bg-sand px-3 py-1 text-neutral/80">
+        P {recipe.protein}g
+      </span>
+      <span className="rounded-full bg-sand px-3 py-1 text-neutral/80">
+        F {recipe.fat}g
+      </span>
+      <span className="rounded-full bg-sand px-3 py-1 text-neutral/80">
+        C {recipe.carbs}g
+      </span>
+    </>
+  );
+}
+
+function NutritionBlock({ recipe }: { recipe: RankedRecipeRecommendation }) {
+  const available = hasDisplayableNutrition(recipe);
+
+  return (
+    <section>
+      <h4 className="mb-2 text-sm font-semibold text-dark-green">Nutrition</h4>
+      {available ? (
+        <dl className="grid grid-cols-2 gap-2 text-sm text-neutral/80 sm:grid-cols-4">
+          <div>
+            <dt className="text-xs text-neutral/55">Calories</dt>
+            <dd className="font-medium text-neutral/90">{recipe.calories} kcal</dd>
+          </div>
+          <div>
+            <dt className="text-xs text-neutral/55">Protein</dt>
+            <dd className="font-medium text-neutral/90">{recipe.protein}g</dd>
+          </div>
+          <div>
+            <dt className="text-xs text-neutral/55">Fat</dt>
+            <dd className="font-medium text-neutral/90">{recipe.fat}g</dd>
+          </div>
+          <div>
+            <dt className="text-xs text-neutral/55">Carbs</dt>
+            <dd className="font-medium text-neutral/90">{recipe.carbs}g</dd>
+          </div>
+        </dl>
+      ) : (
+        <p className="text-sm text-neutral/60">Nutrition unavailable</p>
+      )}
+    </section>
+  );
+}
+
 function InstructionsList({ items }: { items: DisplayInstruction[] }) {
   if (items.length === 0) return null;
 
@@ -85,6 +151,32 @@ function InstructionsList({ items }: { items: DisplayInstruction[] }) {
   );
 }
 
+function parseNutritionPayload(data: unknown): {
+  calories: number;
+  protein: number;
+  fat: number;
+  carbs: number;
+} | null {
+  if (!data || typeof data !== "object") return null;
+  const n = data as Record<string, unknown>;
+  const calories = typeof n.calories === "number" ? n.calories : Number(n.calories);
+  const protein = typeof n.protein === "number" ? n.protein : Number(n.protein);
+  const fat = typeof n.fat === "number" ? n.fat : Number(n.fat);
+  const carbs = typeof n.carbs === "number" ? n.carbs : Number(n.carbs);
+  if (
+    ![calories, protein, fat, carbs].every((v) => Number.isFinite(v)) ||
+    (calories <= 0 && protein <= 0 && fat <= 0 && carbs <= 0)
+  ) {
+    return null;
+  }
+  return {
+    calories: Math.round(calories),
+    protein: Math.round(protein),
+    fat: Math.round(fat),
+    carbs: Math.round(carbs),
+  };
+}
+
 export function RankedRecipeCard({
   recipe,
   expanded,
@@ -103,11 +195,16 @@ export function RankedRecipeCard({
     onDetailLoadedRef.current = onDetailLoaded;
   }, [onDetailLoaded]);
 
-  const missingInstructions = recipe.instructions.length === 0;
+  const displayInstructions = normalizeDisplayInstructions(recipe.instructions);
+  const instructionsUsable = hasEnoughCookingSteps(displayInstructions);
+  const missingInstructions =
+    recipe.instructions.length === 0 || !instructionsUsable;
   const missingIngredients =
     !recipe.ingredients || recipe.ingredients.length === 0;
+  const missingNutrition = !hasDisplayableNutrition(recipe);
   const needsDetailFetch =
-    recipe.id > 0 && (missingInstructions || missingIngredients);
+    recipe.id > 0 &&
+    (missingInstructions || missingIngredients || missingNutrition);
 
   useEffect(() => {
     if (!expanded || !needsDetailFetch) {
@@ -152,8 +249,9 @@ export function RankedRecipeCard({
                 typeof ing === "string" && Boolean(ing.trim())
             )
           : [];
+        const nutrition = parseNutritionPayload(data.nutrition);
 
-        if (steps.length === 0 && ingredients.length === 0) {
+        if (steps.length === 0 && ingredients.length === 0 && !nutrition) {
           setDetailError("Cooking details are not available for this recipe.");
           return;
         }
@@ -161,6 +259,7 @@ export function RankedRecipeCard({
         onDetailLoadedRef.current?.({
           instructions: steps,
           ingredients,
+          nutrition: nutrition ?? undefined,
         });
       } catch {
         if (!cancelled) {
@@ -189,7 +288,6 @@ export function RankedRecipeCard({
     matched,
     missing
   );
-  const displayInstructions = normalizeDisplayInstructions(recipe.instructions);
 
   return (
     <Card className="h-auto w-full overflow-hidden p-0">
@@ -218,26 +316,7 @@ export function RankedRecipeCard({
           </div>
 
           <div className="flex flex-wrap gap-2 text-xs">
-            {hasDisplayableNutrition(recipe) ? (
-              <>
-                <span className="rounded-full bg-sand px-3 py-1 text-neutral/80">
-                  {recipe.calories} kcal
-                </span>
-                <span className="rounded-full bg-sand px-3 py-1 text-neutral/80">
-                  P {recipe.protein}g
-                </span>
-                <span className="rounded-full bg-sand px-3 py-1 text-neutral/80">
-                  F {recipe.fat}g
-                </span>
-                <span className="rounded-full bg-sand px-3 py-1 text-neutral/80">
-                  C {recipe.carbs}g
-                </span>
-              </>
-            ) : (
-              <span className="rounded-full bg-sand px-3 py-1 text-neutral/60">
-                Nutrition unavailable
-              </span>
-            )}
+            <NutritionSummary recipe={recipe} />
             {recipe.readyInMinutes > 0 && (
               <span className="rounded-full bg-sand px-3 py-1 text-neutral/80">
                 {recipe.readyInMinutes} min
@@ -261,6 +340,8 @@ export function RankedRecipeCard({
               {recipe.reason}
             </p>
           </section>
+
+          <NutritionBlock recipe={recipe} />
 
           <section>
             <h4 className="mb-2 text-sm font-semibold text-dark-green">
@@ -299,7 +380,7 @@ export function RankedRecipeCard({
             <h4 className="mb-2 text-sm font-semibold text-dark-green">
               Instructions
             </h4>
-            {displayInstructions.length > 0 ? (
+            {instructionsUsable ? (
               <InstructionsList items={displayInstructions} />
             ) : detailLoading ? (
               <p className="text-sm text-neutral/60">Loading cooking steps...</p>
