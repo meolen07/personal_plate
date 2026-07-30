@@ -237,9 +237,118 @@ async function spoonacularFetch(
 }
 
 /** Default / clamp for complexSearch — keep lean for recommend latency. */
-export const SPOONACULAR_SEARCH_DEFAULT = 20;
-export const SPOONACULAR_SEARCH_MIN = 12;
+export const SPOONACULAR_SEARCH_DEFAULT = 12;
+export const SPOONACULAR_SEARCH_MIN = 10;
 export const SPOONACULAR_SEARCH_MAX = 30;
+/** Cap ingredients sent to Spoonacular includeIngredients (main items only). */
+export const SPOONACULAR_INGREDIENT_LIMIT = 8;
+
+/**
+ * Common pantry staples that dilute Spoonacular search when the list is long.
+ * Matching uses a normalized core name (lowercase, no qty/units fluff).
+ */
+const PANTRY_NOISE_NAMES = new Set([
+  "salt",
+  "kosher salt",
+  "sea salt",
+  "pepper",
+  "black pepper",
+  "white pepper",
+  "ground pepper",
+  "oil",
+  "olive oil",
+  "vegetable oil",
+  "canola oil",
+  "cooking oil",
+  "sesame oil",
+  "water",
+  "sugar",
+  "brown sugar",
+  "white sugar",
+  "powdered sugar",
+  "garlic powder",
+  "onion powder",
+  "chili powder",
+  "paprika",
+  "cumin",
+  "baking soda",
+  "baking powder",
+  "flour",
+  "all purpose flour",
+  "cornstarch",
+  "corn starch",
+  "vinegar",
+  "soy sauce",
+  "butter",
+]);
+
+function normalizeIngredientForNoiseCheck(ingredient: string): string {
+  return ingredient
+    .toLowerCase()
+    .replace(/\([^)]*\)/g, " ")
+    .replace(/^[\d./\s-]+/, "")
+    .replace(/\b\d+([\d./]*)?\s*/g, " ")
+    .replace(
+      /\b(cups?|tbsps?|tbsp|tsps?|tsp|tablespoons?|teaspoons?|ounces?|oz|pounds?|lbs?|grams?|g|ml|pinch(?:es)?|dash(?:es)?|to taste)\b/gi,
+      " "
+    )
+    .replace(/[^a-z\s-]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function isPantryNoiseIngredient(ingredient: string): boolean {
+  const core = normalizeIngredientForNoiseCheck(ingredient);
+  if (!core) return true;
+  if (PANTRY_NOISE_NAMES.has(core)) return true;
+  // Single-token staples like "salt", "oil", "water", "sugar", "pepper"
+  if (
+    core === "salt" ||
+    core === "pepper" ||
+    core === "oil" ||
+    core === "water" ||
+    core === "sugar" ||
+    core === "flour" ||
+    core === "butter" ||
+    core === "vinegar"
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Prefer distinctive “main” ingredients for Spoonacular search.
+ * Drops pantry noise when the list is long; caps at ~6–8 items.
+ * Callers should still rank matched/missing against the full pantry list.
+ */
+export function trimIngredientsForSpoonacularSearch(
+  ingredients: string[],
+  limit = SPOONACULAR_INGREDIENT_LIMIT
+): string[] {
+  const cleaned = ingredients
+    .map((i) => i.trim())
+    .filter(Boolean);
+
+  if (cleaned.length === 0) return [];
+
+  const cap = Math.min(Math.max(limit, 6), 8);
+  const main = cleaned.filter((i) => !isPantryNoiseIngredient(i));
+  const noise = cleaned.filter((i) => isPantryNoiseIngredient(i));
+
+  // Prefer mains; if too few, fill with noise so search still has signal.
+  const preferred =
+    main.length > 0 ? [...main, ...noise] : cleaned;
+
+  // When the list is short, keep everything (still capped).
+  if (cleaned.length <= cap) {
+    return preferred.slice(0, cap);
+  }
+
+  // Long list: drop noise first, then take top mains.
+  const trimmed = (main.length >= 4 ? main : preferred).slice(0, cap);
+  return trimmed.length > 0 ? trimmed : cleaned.slice(0, cap);
+}
 
 export function clampSpoonacularSearchNumber(value?: number): number {
   const fallback = value ?? SPOONACULAR_SEARCH_DEFAULT;
@@ -256,9 +365,9 @@ export async function searchSpoonacularRecipes(input: {
   maxReadyTime?: number;
 }): Promise<SpoonacularRecipeCandidate[]> {
   const number = clampSpoonacularSearchNumber(input.number);
-  const ingredients = input.ingredients
-    .map((i) => i.trim().toLowerCase())
-    .filter(Boolean);
+  const ingredients = trimIngredientsForSpoonacularSearch(
+    input.ingredients.map((i) => i.trim().toLowerCase()).filter(Boolean)
+  );
 
   if (ingredients.length === 0) {
     return [];
@@ -299,7 +408,7 @@ export async function searchSpoonacularRecipes(input: {
   }
 
   const payload = (await spoonacularFetch("/recipes/complexSearch", {
-    includeIngredients: ingredients.slice(0, 12).join(","),
+    includeIngredients: ingredients.join(","),
     addRecipeInformation: "true",
     fillIngredients: "true",
     addRecipeNutrition: "true",
@@ -307,6 +416,8 @@ export async function searchSpoonacularRecipes(input: {
     number,
     // Maximize used pantry ingredients (aligns with sort below).
     ranking: 1,
+    // Ignore oil/salt/water etc. in Spoonacular's used/missed counts so staples
+    // do not inflate "missing" and drown out real grocery gaps.
     ignorePantry: "true",
     diet,
     intolerances,
@@ -321,7 +432,16 @@ export async function searchSpoonacularRecipes(input: {
   const results = Array.isArray(payload.results) ? payload.results : [];
   const candidates = results
     .map((raw) => normalizeCandidate(raw))
-    .filter((c) => c.id > 0 && c.title);
+    .filter((c) => c.id > 0 && c.title)
+    // Prefer fewer extras when API used/missed counts are present (soft local sort).
+    .sort((a, b) => {
+      const usedA = a.usedIngredientCount ?? 0;
+      const usedB = b.usedIngredientCount ?? 0;
+      if (usedB !== usedA) return usedB - usedA;
+      const missA = a.missedIngredientCount ?? Number.POSITIVE_INFINITY;
+      const missB = b.missedIngredientCount ?? Number.POSITIVE_INFINITY;
+      return missA - missB;
+    });
 
   await cacheSet(cacheId, candidates, SEARCH_CACHE_TTL);
   return candidates;
