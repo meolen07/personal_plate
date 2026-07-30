@@ -16,6 +16,11 @@ CREATE TABLE IF NOT EXISTS profiles (
   dietary_restrictions TEXT[] DEFAULT '{}',
   nutrition_goals TEXT DEFAULT '',
   preferred_cuisine TEXT DEFAULT '',
+  activity_level TEXT DEFAULT '',
+  target_calories INTEGER,
+  budget_usd NUMERIC,
+  preferred_foods TEXT[] DEFAULT '{}',
+  disliked_foods TEXT[] DEFAULT '{}',
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 

@@ -48,6 +48,34 @@ export function ProfileSummary({ profile }: ProfileSummaryProps) {
             {profile.nutrition_goals || "Not specified"}
           </dd>
         </div>
+        <div>
+          <dt className="font-medium text-dark-green">Activity Level</dt>
+          <dd className="text-neutral/80">
+            {profile.activity_level || "Not specified"}
+          </dd>
+        </div>
+        <div>
+          <dt className="font-medium text-dark-green">Target Calories</dt>
+          <dd className="text-neutral/80">
+            {profile.target_calories != null
+              ? `${profile.target_calories} / meal`
+              : "Not specified"}
+          </dd>
+        </div>
+        <div>
+          <dt className="font-medium text-dark-green">Budget</dt>
+          <dd className="text-neutral/80">
+            {profile.budget_usd != null
+              ? `$${profile.budget_usd} / meal`
+              : "Not specified"}
+          </dd>
+        </div>
+        <div>
+          <dt className="font-medium text-dark-green">Preferred Foods</dt>
+          <dd className="text-neutral/80">
+            {formatArray(profile.preferred_foods)}
+          </dd>
+        </div>
       </dl>
       <div className="mt-4">
         <Link href="/profile">

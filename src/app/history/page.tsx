@@ -1,4 +1,3 @@
-import Image from "next/image";
 import Link from "next/link";
 import { requireUser } from "@/lib/auth";
 import { getRecipes } from "@/lib/database";
@@ -6,6 +5,7 @@ import { Alert } from "@/components/Alert";
 import { Button } from "@/components/Button";
 import { Card } from "@/components/Card";
 import { EmptyState } from "@/components/EmptyState";
+import { RecipeImage } from "@/components/RecipeImage";
 import { formatDate } from "@/lib/utils";
 import { MEDICAL_DISCLAIMER } from "@/lib/types";
 
@@ -21,7 +21,7 @@ export default async function HistoryPage() {
             Recipe History
           </h1>
           <p className="mt-1 text-neutral/70">
-            Your saved AI meal suggestions
+            Your saved AI Suggest and Personalized Rank recipes
           </p>
         </div>
         <Link href="/recommend">
@@ -37,7 +37,7 @@ export default async function HistoryPage() {
         <div className="text-center">
           <EmptyState
             title="No saved recipes yet"
-            description="Generate a personalized meal suggestion from your available ingredients and save it to build your recipe history."
+            description="Suggest or rank a personalized meal from your ingredients, then save it to build your recipe history."
             icon="📖"
           />
           <Link href="/recommend" className="mt-4 inline-block">
@@ -50,11 +50,9 @@ export default async function HistoryPage() {
             <Card key={recipe.id}>
               {recipe.generated_recipe.image_url && (
                 <div className="mb-4 overflow-hidden rounded-xl border border-light-border bg-sand">
-                  <Image
+                  <RecipeImage
                     src={recipe.generated_recipe.image_url}
-                    alt={`AI illustration of ${recipe.generated_recipe.title}`}
-                    width={1024}
-                    height={768}
+                    alt={recipe.generated_recipe.title}
                     className="h-56 w-full object-cover"
                   />
                 </div>
@@ -84,13 +82,28 @@ export default async function HistoryPage() {
 
               <div className="mt-3 flex flex-wrap gap-4 text-xs text-neutral/60">
                 <span>Servings: {recipe.generated_recipe.servings}</span>
-                <span>
-                  Prep: {recipe.generated_recipe.prep_time_minutes} min
-                </span>
-                <span>
-                  Cook: {recipe.generated_recipe.cook_time_minutes} min
-                </span>
+                {recipe.generated_recipe.prep_time_minutes > 0 && (
+                  <span>
+                    Prep: {recipe.generated_recipe.prep_time_minutes} min
+                  </span>
+                )}
+                {recipe.generated_recipe.cook_time_minutes > 0 && (
+                  <span>
+                    Ready: {recipe.generated_recipe.cook_time_minutes} min
+                  </span>
+                )}
               </div>
+
+              {recipe.generated_recipe.nutrition_notes && (
+                <div className="mt-3 rounded-lg bg-success-bg p-3">
+                  <p className="text-xs font-semibold text-success-text">
+                    Nutrition
+                  </p>
+                  <p className="mt-1 text-sm text-success-text/90">
+                    {recipe.generated_recipe.nutrition_notes}
+                  </p>
+                </div>
+              )}
 
               {recipe.substitutions.length > 0 && (
                 <div className="mt-3 rounded-lg bg-warning-bg/50 p-3">
@@ -116,21 +129,31 @@ export default async function HistoryPage() {
                     <h3 className="font-semibold text-dark-green">
                       Ingredients
                     </h3>
-                    <ul className="mt-1 list-inside list-disc">
-                      {recipe.generated_recipe.ingredients.map((ing, i) => (
-                        <li key={i}>{ing}</li>
-                      ))}
-                    </ul>
+                    {recipe.generated_recipe.ingredients.length === 0 ? (
+                      <p className="mt-1 text-neutral/60">None listed</p>
+                    ) : (
+                      <ul className="mt-1 list-inside list-disc">
+                        {recipe.generated_recipe.ingredients.map((ing, i) => (
+                          <li key={i}>{ing}</li>
+                        ))}
+                      </ul>
+                    )}
                   </div>
                   <div>
                     <h3 className="font-semibold text-dark-green">
                       Instructions
                     </h3>
-                    <ol className="mt-1 list-inside list-decimal">
-                      {recipe.generated_recipe.instructions.map((step, i) => (
-                        <li key={i}>{step}</li>
-                      ))}
-                    </ol>
+                    {recipe.generated_recipe.instructions.length === 0 ? (
+                      <p className="mt-1 text-neutral/60">None listed</p>
+                    ) : (
+                      <ol className="mt-1 list-inside list-decimal">
+                        {recipe.generated_recipe.instructions.map(
+                          (step, i) => (
+                            <li key={i}>{step}</li>
+                          )
+                        )}
+                      </ol>
+                    )}
                   </div>
                 </div>
               </details>
