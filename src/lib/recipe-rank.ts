@@ -96,14 +96,15 @@ ${availableIngredients.join(", ") || "None listed"}
 Candidates (JSON):
 ${JSON.stringify(candidatePayload)}
 
-PRIMARY goal (after ≥1 real pantry match): MINIMIZE the shopping list.
+PRIMARY goal (after ≥1 real pantry match): MINIMIZE missing ingredients (shortest shopping list).
 Prefer recipes the patient can cook with mostly what they already have.
-A recipe that matches only 1 pantry item but needs many extras (e.g. 8–12 missing) MUST rank BELOW a recipe with fewer missing items and a higher match ratio matched/(matched+missing).
+Sort key: (1) fewest missingIngredients, (2) most matched / highest coverage matched/(matched+missing).
+A recipe that matches only 1 pantry item but needs many extras (e.g. 5–12 missing) MUST rank BELOW a recipe with fewer missing items and similar or better matches.
 Do NOT recommend "barely related" recipes that force a big grocery trip when better pantry fits exist.
 
-Rank the best ${MIN_RESULTS}-${MAX_RESULTS} recipes. Sort by fewest missing / highest match ratio first.
+Rank the best ${MIN_RESULTS}-${MAX_RESULTS} recipes. Sort by fewest missing, then highest match count / coverage.
 When available ingredients are listed, ONLY include recipes that use at least one of them.
-Prefer match ratio ≥ ~0.25 when possible; prefer fewer than ~6–7 missing ingredients when alternatives exist.
+Prefer coverage ≥ ~0.4 and ≤ ~3 missing when alternatives exist (relax to ≤4 / lower coverage only if too few remain).
 Secondary (only after ingredient fit / short shopping list): allergy/diet safety, nutrition goal fit, cook time, budget.
 Hard-avoid known allergens and disliked foods when possible.
 
@@ -493,26 +494,74 @@ export function matchCoverageRatio(matched: number, missing: number): number {
   return denom > 0 ? matched / denom : 0;
 }
 
-/** Soft-drop thresholds — relaxed when too few candidates would remain. */
-export const MIN_SOFT_MATCH_RATIO = 0.25;
-export const MAX_SOFT_MISSING = 6;
+/**
+ * Soft-filter tiers — prefer few missing + solid coverage; relax gradually
+ * so we never return empty when matches exist.
+ */
+export const SOFT_FILTER_TIERS = [
+  { maxMissing: 3, minCoverage: 0.4 },
+  { maxMissing: 4, minCoverage: 0.4 },
+  { maxMissing: 6, minCoverage: 0.25 },
+] as const;
 
-function isStrongPantryFit(r: RankedRecipeRecommendation): boolean {
+/** Preferred soft-drop thresholds (first tier). */
+export const MIN_SOFT_MATCH_RATIO = SOFT_FILTER_TIERS[0].minCoverage;
+export const MAX_SOFT_MISSING = SOFT_FILTER_TIERS[0].maxMissing;
+
+type IngredientFitSortable = {
+  matchedIngredients: string[];
+  missingIngredients: string[];
+  score: number;
+};
+
+/**
+ * Primary sort: fewer missing, then more matched / higher coverage, then score.
+ * Exported for tests.
+ */
+export function compareByIngredientFit(
+  a: IngredientFitSortable,
+  b: IngredientFitSortable
+): number {
+  const missDiff = a.missingIngredients.length - b.missingIngredients.length;
+  if (missDiff !== 0) return missDiff;
+
+  const matchDiff =
+    b.matchedIngredients.length - a.matchedIngredients.length;
+  if (matchDiff !== 0) return matchDiff;
+
+  const covA = matchCoverageRatio(
+    a.matchedIngredients.length,
+    a.missingIngredients.length
+  );
+  const covB = matchCoverageRatio(
+    b.matchedIngredients.length,
+    b.missingIngredients.length
+  );
+  if (covB !== covA) return covB - covA;
+
+  return b.score - a.score;
+}
+
+function fitsSoftTier(
+  r: RankedRecipeRecommendation,
+  tier: { maxMissing: number; minCoverage: number }
+): boolean {
   const matched = r.matchedIngredients.length;
   const missing = r.missingIngredients.length;
   if (matched <= 0) return false;
   return (
-    matchCoverageRatio(matched, missing) >= MIN_SOFT_MATCH_RATIO &&
-    missing <= MAX_SOFT_MISSING
+    missing <= tier.maxMissing &&
+    matchCoverageRatio(matched, missing) >= tier.minCoverage
   );
 }
 
 /**
  * When the user listed pantry items:
  * 1) Drop 0-match recipes when any match exists.
- * 2) Soft-drop weak fits (low match ratio OR many missing) when stronger alternatives exist.
- * 3) If soft-drop would leave too few results, fall back to best remaining matches.
- * 4) If every candidate is 0-match, keep a few with very low scores + honest reasons.
+ * 2) Soft-drop weak fits (many missing / low coverage) when stronger alternatives exist.
+ * 3) Relax tiers gradually (≤3 → ≤4 → ≤6 missing) if too few results; never empty.
+ * 4) Sort by fewest missing, then matched/coverage, then score.
+ * 5) If every candidate is 0-match, keep a few with very low scores + honest reasons.
  */
 export function preferIngredientMatches(
   ranked: RankedRecipeRecommendation[],
@@ -544,41 +593,25 @@ export function preferIngredientMatches(
     }));
   }
 
-  const strong = withMatches.filter(isStrongPantryFit);
-  if (strong.length >= MIN_RESULTS) {
-    return strong.slice(0, MAX_RESULTS);
-  }
-  if (strong.length > 0) {
-    // Keep strong fits first; fill remainder from other matches (already score-sorted).
-    const strongIds = new Set(strong.map((r) => r.id));
-    const fillers = withMatches.filter((r) => !strongIds.has(r.id));
-    return [...strong, ...fillers].slice(0, MAX_RESULTS);
+  for (const tier of SOFT_FILTER_TIERS) {
+    const filtered = withMatches.filter((r) => fitsSoftTier(r, tier));
+    if (filtered.length >= MIN_RESULTS) {
+      return [...filtered]
+        .sort(compareByIngredientFit)
+        .slice(0, MAX_RESULTS);
+    }
   }
 
-  // No strong fits — still prefer higher coverage / fewer missing among matches.
+  // Too few at every tier — keep best matches; never return empty.
   return [...withMatches]
-    .sort((a, b) => {
-      const covA = matchCoverageRatio(
-        a.matchedIngredients.length,
-        a.missingIngredients.length
-      );
-      const covB = matchCoverageRatio(
-        b.matchedIngredients.length,
-        b.missingIngredients.length
-      );
-      if (covB !== covA) return covB - covA;
-      if (a.missingIngredients.length !== b.missingIngredients.length) {
-        return a.missingIngredients.length - b.missingIngredients.length;
-      }
-      return b.score - a.score;
-    })
+    .sort(compareByIngredientFit)
     .slice(0, MAX_RESULTS);
 }
 
 /**
  * Ingredient-fit score 0–100 used by heuristic ranking and to rein in Gemini scores.
- * Heavily penalizes high missing count / low coverage so 1-match+many-missing loses
- * to multi-match+few-missing.
+ * Coverage dominates; missing count is heavily penalized so 1-match+many-missing loses
+ * to multi-match+few-missing, and fewer-missing wins when matched counts are similar.
  */
 export function ingredientFitScore(
   matched: string[],
@@ -588,10 +621,12 @@ export function ingredientFitScore(
   const miss = missing.length;
   const coverage = matchCoverageRatio(m, miss);
 
-  let score = Math.round(coverage * 55);
-  score += Math.min(20, m * 4);
-  score -= Math.round((1 - coverage) * 25);
-  score -= Math.min(35, miss * 3);
+  // Coverage is the bulk of the score; matched count is a smaller bonus.
+  let score = Math.round(coverage * 70);
+  score += Math.min(15, m * 3);
+  score -= Math.round((1 - coverage) * 15);
+  // Steep missing penalty: 3 → −21, 5 → −35, 8+ → −56 capped.
+  score -= Math.min(56, miss * 7);
   return Math.max(0, Math.min(100, score));
 }
 
@@ -610,15 +645,15 @@ export function blendGeminiWithIngredientFit(
   }
 
   const fit = ingredientFitScore(matched, missing);
-  // Pantry fit dominates; Gemini may still nudge nutrition/profile preferences.
-  score = Math.round(fit * 0.75 + score * 0.25);
+  // Pantry fit dominates; Gemini may only nudge nutrition/profile preferences.
+  score = Math.round(fit * 0.82 + score * 0.18);
 
   const coverage = matchCoverageRatio(matched.length, missing.length);
   if (coverage < MIN_SOFT_MATCH_RATIO) {
-    score = Math.min(score, 38);
+    score = Math.min(score, 32);
   }
   if (missing.length > MAX_SOFT_MISSING) {
-    score = Math.min(score, 42);
+    score = Math.min(score, 36);
   }
 
   return Math.max(0, Math.min(100, score));
@@ -762,7 +797,7 @@ export function rankRecipesHeuristically(
   });
 
   return preferIngredientMatches(
-    scored.sort((a, b) => b.score - a.score),
+    scored.sort(compareByIngredientFit),
     availableIngredients.length,
     profile
   );
@@ -846,7 +881,7 @@ function normalizeRanked(
   if (ranked.length === 0) return null;
 
   return preferIngredientMatches(
-    ranked.sort((a, b) => b.score - a.score),
+    ranked.sort(compareByIngredientFit),
     availableIngredients.length,
     profile
   );
