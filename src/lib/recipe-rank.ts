@@ -84,6 +84,7 @@ ${JSON.stringify(candidatePayload)}
 
 PRIMARY goal: maximize use of available ingredients and minimize missing/shopping items.
 Rank the best ${MIN_RESULTS}-${MAX_RESULTS} recipes. Sort best ingredient match first.
+When available ingredients are listed, ONLY include recipes that use at least one of them.
 Secondary (only after ingredient fit): allergy/diet safety, nutrition goal fit, cook time, budget.
 Hard-avoid known allergens and disliked foods when possible.
 
@@ -106,27 +107,194 @@ Rules:
 - index must refer to a candidate index above
 - sort recipes by score descending (best available-ingredient match first)
 - return between ${MIN_RESULTS} and ${MAX_RESULTS} items when enough candidates exist
-- reason: one concise sentence; mention ingredient match when relevant`;
+- reason: one concise sentence; ONLY mention an available ingredient if it appears in matchedIngredients; never claim a match that is not listed there
+- if available ingredients are listed, do not return recipes with empty matchedIngredients`;
 }
 
-/** Strip amounts/units so "2 cups chicken breast" aligns with "chicken". */
-function ingredientNameCore(ingredient: string): string {
+const UNIT_PATTERN =
+  /\b(cups?|tbsps?|tbsp|tsps?|tsp|tablespoons?|teaspoons?|ounces?|oz|pounds?|lbs?|grams?|g|kilograms?|kg|ml|liters?|litres?|cloves?|slices?|pieces?|cans?|packages?|pkgs?|bunches?|heads?|stalks?|pinch(?:es)?|dash(?:es)?|handfuls?|to taste)\b/gi;
+
+/** Size / freshness modifiers that should not drive matching. */
+const INGREDIENT_STOPWORDS = new Set([
+  "a",
+  "an",
+  "the",
+  "and",
+  "or",
+  "of",
+  "with",
+  "fresh",
+  "large",
+  "small",
+  "medium",
+  "whole",
+  "dried",
+  "ground",
+  "raw",
+  "cooked",
+  "frozen",
+  "organic",
+  "boneless",
+  "skinless",
+  "thin",
+  "thick",
+  "extra",
+  "virgin",
+  "optional",
+  "plus",
+  "more",
+  "for",
+  "serving",
+  "garnish",
+  "into",
+  "about",
+  "approximately",
+]);
+
+/** Simple English plural → singular for pantry tokens (zucchini/zucchinis, tomatoes/tomato). */
+export function singularizeToken(token: string): string {
+  if (token.length < 4) return token;
+  if (token.endsWith("ies") && token.length > 4) {
+    return `${token.slice(0, -3)}y`;
+  }
+  if (token.endsWith("oes") && token.length > 4) {
+    return token.slice(0, -2);
+  }
+  if (/(?:ches|shes|xes|zes|ses)$/.test(token) && token.length > 4) {
+    return token.slice(0, -2);
+  }
+  // Keep asparagus / hummus (…us) and couscous (…ss). Do NOT special-case
+  // "…is" — that incorrectly blocks zucchinis → zucchini.
+  if (token.endsWith("s") && !token.endsWith("ss") && !token.endsWith("us")) {
+    return token.slice(0, -1);
+  }
+  return token;
+}
+
+/**
+ * Core display/name string: strip leading qty, units, and trailing comma descriptors.
+ * "3 Zucchinis, rinsed" → "zucchinis"
+ */
+export function ingredientNameCore(ingredient: string): string {
   return (ingredient.split(",")[0] ?? ingredient)
     .toLowerCase()
+    .replace(/\([^)]*\)/g, " ")
     .replace(/^[\d./\s-]+/, "")
     .replace(
-      /\b(cups?|tbsps?|tbsp|tsps?|tsp|tablespoons?|teaspoons?|ounces?|oz|pounds?|lbs?|grams?|kilograms?|kg|ml|liters?|litres?|cloves?|slices?|pieces?|pinch(?:es)?|dash(?:es)?|to taste)\b/g,
+      /\b\d+([\d./]*)?\s*(x|×)?\s*/g,
       " "
     )
+    .replace(UNIT_PATTERN, " ")
+    .replace(/[^a-z\s-]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
 }
 
-function ingredientsOverlap(available: string, ingredient: string): boolean {
-  const a = available.toLowerCase().trim();
+/** Tokenize an ingredient / pantry string for overlap checks. */
+export function ingredientTokens(ingredient: string): string[] {
   const core = ingredientNameCore(ingredient);
-  if (!a || !core) return false;
-  return core.includes(a) || a.includes(core);
+  if (!core) return [];
+  return core
+    .split(/[\s-]+/)
+    .map((t) => singularizeToken(t.trim()))
+    .filter((t) => t.length >= 2 && !INGREDIENT_STOPWORDS.has(t));
+}
+
+function tokenSetContains(haystack: string[], needle: string[]): boolean {
+  if (needle.length === 0) return false;
+  const set = new Set(haystack);
+  return needle.every((t) => set.has(t));
+}
+
+/**
+ * True when pantry item covers a recipe ingredient (or vice versa on tokens).
+ * Uses singularized tokens — not raw substring — to avoid egg→eggplant false positives.
+ */
+export function ingredientsOverlap(
+  available: string,
+  ingredient: string
+): boolean {
+  const availTokens = ingredientTokens(available);
+  const recipeTokens = ingredientTokens(ingredient);
+  if (availTokens.length === 0 || recipeTokens.length === 0) return false;
+
+  // "chicken" ⊆ "chicken breast"; "zucchini" ≡ "zucchinis";
+  // "fresh zucchini" → [zucchini] ⊆ / ⊇ recipe tokens.
+  return (
+    tokenSetContains(recipeTokens, availTokens) ||
+    tokenSetContains(availTokens, recipeTokens)
+  );
+}
+
+/** Honest reason from real matched/missing — never invents pantry hits. */
+export function buildMatchReason(
+  matched: string[],
+  availableCount: number
+): string {
+  if (availableCount <= 0) {
+    return "Selected as a strong match for your health profile.";
+  }
+  if (matched.length === 0) {
+    return "Limited pantry overlap — you may need most ingredients for this recipe.";
+  }
+
+  const names = matched
+    .map((m) => ingredientNameCore(m) || m.toLowerCase().trim())
+    .filter(Boolean)
+    .slice(0, 3);
+
+  if (matched.length === 1) {
+    return `Uses ${names[0] ?? "an ingredient"} from your list.`;
+  }
+  return `Uses ${matched.length} ingredients from your list (${names.join(", ")}).`;
+}
+
+/**
+ * Keep Gemini prose only when it does not claim pantry matches we did not compute.
+ */
+export function reconcileReason(
+  geminiReason: string | undefined,
+  matched: string[],
+  availableCount: number
+): string {
+  const heuristic = buildMatchReason(matched, availableCount);
+  const trimmed = geminiReason?.trim();
+  if (!trimmed) return heuristic;
+  if (availableCount <= 0) return trimmed;
+
+  if (matched.length === 0) {
+    const claimsPantryUse =
+      /\b(leverage[sd]?|uses?|utilizes?|with your|from your|available|pantry|match(?:es|ed|ing)?|on hand|you have|you already)\b/i.test(
+        trimmed
+      );
+    return claimsPantryUse ? heuristic : trimmed;
+  }
+
+  return trimmed;
+}
+
+/**
+ * When the user listed pantry items, drop 0-match recipes.
+ * If every candidate is 0-match, keep a few with very low scores + honest reasons.
+ */
+export function preferIngredientMatches(
+  ranked: RankedRecipeRecommendation[],
+  availableCount: number
+): RankedRecipeRecommendation[] {
+  if (availableCount <= 0 || ranked.length === 0) {
+    return ranked.slice(0, MAX_RESULTS);
+  }
+
+  const withMatches = ranked.filter((r) => r.matchedIngredients.length > 0);
+  if (withMatches.length > 0) {
+    return withMatches.slice(0, MAX_RESULTS);
+  }
+
+  return ranked.slice(0, Math.min(MIN_RESULTS, ranked.length)).map((r) => ({
+    ...r,
+    score: Math.min(r.score, 12),
+    reason: buildMatchReason([], availableCount),
+  }));
 }
 
 /** Exported for tests — matched vs missing against the available pantry list. */
@@ -230,6 +398,11 @@ export function rankRecipesHeuristically(
       score += 4;
     }
 
+    // Bury true zero-match candidates when the user listed pantry items.
+    if (availableIngredients.length > 0 && matched.length === 0) {
+      score = Math.min(score, 12);
+    }
+
     score = Math.max(0, Math.min(100, score));
 
     return {
@@ -244,7 +417,7 @@ export function rankRecipesHeuristically(
       readyInMinutes: candidate.readyInMinutes,
       matchedIngredients: matched,
       missingIngredients: missing.slice(0, 12),
-      reason: `Uses ${matched.length}/${totalIngredients || matched.length} available ingredient(s); ${missing.length} missing.`,
+      reason: buildMatchReason(matched, availableIngredients.length),
       instructions: cleanInstructionStrings(candidate.instructions),
       ingredients: Array.isArray(candidate.ingredients)
         ? candidate.ingredients.filter(Boolean)
@@ -252,9 +425,10 @@ export function rankRecipesHeuristically(
     } satisfies RankedRecipeRecommendation;
   });
 
-  return scored
-    .sort((a, b) => b.score - a.score)
-    .slice(0, MAX_RESULTS);
+  return preferIngredientMatches(
+    scored.sort((a, b) => b.score - a.score),
+    availableIngredients.length
+  );
 }
 
 function normalizeRanked(
@@ -281,11 +455,21 @@ function normalizeRanked(
       candidate.ingredients
     );
 
+    let score = Math.max(0, Math.min(100, Math.round(asNumber(obj.score))));
+    if (availableIngredients.length > 0 && matched.length === 0) {
+      score = Math.min(score, 12);
+    }
+
+    const geminiReason =
+      typeof obj.reason === "string" && obj.reason.trim()
+        ? obj.reason.trim()
+        : undefined;
+
     ranked.push({
       id: candidate.id,
       title: candidate.title,
       image: candidate.image,
-      score: Math.max(0, Math.min(100, Math.round(asNumber(obj.score)))),
+      score,
       calories: candidate.nutrition.calories,
       protein: candidate.nutrition.protein,
       fat: candidate.nutrition.fat,
@@ -293,10 +477,11 @@ function normalizeRanked(
       readyInMinutes: candidate.readyInMinutes,
       matchedIngredients: matched,
       missingIngredients: missing.slice(0, 12),
-      reason:
-        typeof obj.reason === "string" && obj.reason.trim()
-          ? obj.reason.trim()
-          : "Selected as a strong match for your available ingredients and health profile.",
+      reason: reconcileReason(
+        geminiReason,
+        matched,
+        availableIngredients.length
+      ),
       instructions: cleanInstructionStrings(candidate.instructions),
       ingredients: Array.isArray(candidate.ingredients)
         ? candidate.ingredients.filter(Boolean)
@@ -306,9 +491,10 @@ function normalizeRanked(
 
   if (ranked.length === 0) return null;
 
-  return ranked
-    .sort((a, b) => b.score - a.score)
-    .slice(0, MAX_RESULTS);
+  return preferIngredientMatches(
+    ranked.sort((a, b) => b.score - a.score),
+    availableIngredients.length
+  );
 }
 
 export async function rankRecipeCandidates(input: {
