@@ -36,7 +36,8 @@ Columns added (idempotent `IF NOT EXISTS`): `nutrition_goals`, `preferred_cuisin
 | `SPOONACULAR_API_KEY` | **Yes** | Candidate search for `/api/recipes/recommend` |
 | `GEMINI_API_KEY_FALLBACK` | No | Optional quota fallback |
 | `NEXT_PUBLIC_GEMINI_API_KEY` | No* | Browser image-gen flows only |
-| `USDA_API_KEY` | No | Nutrition fill-in when Spoonacular is incomplete |
+| `USDA_API_KEY` | No | Nutrition fill-in when Spoonacular is incomplete (ON by default when set) |
+| `RECOMMEND_ENABLE_USDA` | No | Default ON; set `false`/`0`/`off` to skip USDA |
 | `REDIS_URL` | **Recommended on Vercel** | Shared cache across serverless instances; without it each instance uses in-memory cache |
 
 Template: `.env.example`. After changing env on Vercel → **Redeploy**.
@@ -93,7 +94,20 @@ Also enable **Email** provider: Authentication → Providers → Email.
 
 ---
 
-## 6. Ship steps (short)
+## 6. Video upload size (Vercel body limit)
+
+App validation allows kitchen videos up to **~20 MB** (`MAX_VIDEO_BYTES` in `src/lib/video-upload.ts`).
+
+**Vercel Functions hard-cap request bodies at ~4.5 MB** (Hobby and Pro). Multipart uploads to `/api/ingredients/detect` or `/api/recipes/recommend` above that are rejected with **413** before our handlers run — often looking like a vague connection error in the UI.
+
+Practical guidance:
+- Prefer clips **under ~4 MB** in production (short, lower resolution).
+- Raising the app limit to 25–30 MB does **not** help on Vercel; larger files need client compression or direct-to-storage (e.g. Vercel Blob) then server fetch.
+- Local `next dev` can accept larger bodies than production Vercel.
+
+---
+
+## 7. Ship steps (short)
 
 1. Push branch / merge to GitHub  
 2. Vercel → Import repo → set env vars above  
@@ -106,4 +120,4 @@ Local verify before deploy:
 npm test && npm run typecheck && npm run build
 ```
 
-Full setup guide: `HUONG-DAN.md` · English overview: `README.md`.
+Full setup guide: `README.md`.

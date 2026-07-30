@@ -12,6 +12,13 @@ import { assessProfileForRanking } from "@/lib/profile-rank-readiness";
 import { toRecommendedRecipeFromRanked } from "@/lib/save-ranked-recipe";
 import { createClient } from "@/lib/supabase/client";
 import { parseCommaSeparated } from "@/lib/utils";
+import {
+  MAX_VIDEO_BYTES,
+  formatMegabytes,
+  vercelPayloadTooLargeMessage,
+  videoTooLargeMessage,
+  videoUploadHint,
+} from "@/lib/video-upload";
 import type {
   IngredientDetectionResult,
   Profile,
@@ -31,6 +38,50 @@ function mergeIngredientLists(existing: string[], detected: string[]): string[] 
     merged.push(trimmed);
   }
   return merged;
+}
+
+async function readApiErrorMessage(
+  response: Response,
+  fallback: string
+): Promise<string> {
+  if (response.status === 413) {
+    return vercelPayloadTooLargeMessage();
+  }
+
+  const contentType = response.headers.get("content-type") || "";
+  if (contentType.includes("application/json")) {
+    try {
+      const data: unknown = await response.json();
+      if (
+        data &&
+        typeof data === "object" &&
+        "error" in data &&
+        typeof (data as { error: unknown }).error === "string"
+      ) {
+        return (data as { error: string }).error;
+      }
+    } catch {
+      // fall through
+    }
+  } else {
+    try {
+      const text = await response.text();
+      if (/payload too large|entity too large|413/i.test(text)) {
+        return vercelPayloadTooLargeMessage();
+      }
+    } catch {
+      // fall through
+    }
+  }
+
+  return fallback;
+}
+
+function recommendCatchMessage(sentVideo: boolean): string {
+  if (sentVideo) {
+    return "Unable to recommend recipes right now. If the video is over ~4 MB, use a shorter / lower-resolution clip (Vercel rejects larger uploads). Otherwise check your connection and try again.";
+  }
+  return "Unable to recommend recipes right now. Please check your connection and try again.";
 }
 
 export function PersonalizedRankPanel() {
@@ -94,6 +145,9 @@ export function PersonalizedRankPanel() {
 
   const profileReadiness = assessProfileForRanking(profile);
   const busy = loading || detecting;
+  const videoOversized = Boolean(
+    videoFile && videoFile.size > MAX_VIDEO_BYTES
+  );
 
   const handleUseDetectedIngredients = () => {
     if (!detection?.ingredients.length) return;
@@ -140,6 +194,11 @@ export function PersonalizedRankPanel() {
       return;
     }
 
+    if (videoFile.size > MAX_VIDEO_BYTES) {
+      setError(videoTooLargeMessage(videoFile.size));
+      return;
+    }
+
     setDetecting(true);
     setError(null);
     setEmptyMessage(null);
@@ -153,17 +212,18 @@ export function PersonalizedRankPanel() {
         method: "POST",
         body: formData,
       });
-      const data = await response.json();
 
       if (!response.ok) {
         setError(
-          typeof data.error === "string"
-            ? data.error
-            : "Failed to detect ingredients from video."
+          await readApiErrorMessage(
+            response,
+            "Failed to detect ingredients from video."
+          )
         );
         return;
       }
 
+      const data: unknown = await response.json();
       const result =
         data && typeof data === "object"
           ? (data as IngredientDetectionResult)
@@ -188,7 +248,7 @@ export function PersonalizedRankPanel() {
       });
     } catch {
       setError(
-        "Unable to detect ingredients right now. Please check your connection and try again."
+        "Unable to detect ingredients right now. If the video is over ~4 MB, use a shorter / lower-resolution clip (Vercel rejects larger uploads). Otherwise check your connection and try again."
       );
     } finally {
       setDetecting(false);
@@ -205,19 +265,24 @@ export function PersonalizedRankPanel() {
     setExpandedRecipe(null);
     setSavedTitles([]);
 
+    const manualIngredients = parseCommaSeparated(ingredients);
+    const detectedNames =
+      detection?.ingredients.map((item) => item.name) ?? [];
+    // Prefer prior Detect result: avoid re-uploading video + re-running Gemini detect.
+    const reuseDetection = detectedNames.length > 0;
+    const ingredientsForRequest = reuseDetection
+      ? mergeIngredientLists(manualIngredients, detectedNames)
+      : manualIngredients;
+    const sendVideo = Boolean(videoFile) && !reuseDetection;
+
     try {
-      const manualIngredients = parseCommaSeparated(ingredients);
-      const detectedNames =
-        detection?.ingredients.map((item) => item.name) ?? [];
-      // Prefer prior Detect result: avoid re-uploading video + re-running Gemini detect.
-      const reuseDetection = detectedNames.length > 0;
-      const ingredientsForRequest = reuseDetection
-        ? mergeIngredientLists(manualIngredients, detectedNames)
-        : manualIngredients;
-      const sendVideo = Boolean(videoFile) && !reuseDetection;
       let response: Response;
 
       if (sendVideo && videoFile) {
+        if (videoFile.size > MAX_VIDEO_BYTES) {
+          setError(videoTooLargeMessage(videoFile.size));
+          return;
+        }
         const formData = new FormData();
         formData.append("video", videoFile);
         if (ingredientsForRequest.length > 0) {
@@ -251,15 +316,14 @@ export function PersonalizedRankPanel() {
         });
       }
 
-      const data = await response.json();
       if (!response.ok) {
         setError(
-          typeof data.error === "string"
-            ? data.error
-            : "Failed to recommend recipes."
+          await readApiErrorMessage(response, "Failed to recommend recipes.")
         );
         return;
       }
+
+      const data = await response.json();
 
       const ranked = Array.isArray(data.recipes)
         ? (data.recipes as RankedRecipeRecommendation[]).map((recipe) => ({
@@ -307,9 +371,7 @@ export function PersonalizedRankPanel() {
         );
       }
     } catch {
-      setError(
-        "Unable to recommend recipes right now. Please check your connection and try again."
-      );
+      setError(recommendCatchMessage(sendVideo));
     } finally {
       setLoading(false);
     }
@@ -338,13 +400,9 @@ export function PersonalizedRankPanel() {
         }),
       });
 
-      const data = await response.json();
-
       if (!response.ok) {
         setError(
-          typeof data.error === "string"
-            ? data.error
-            : "Failed to save recipe."
+          await readApiErrorMessage(response, "Failed to save recipe.")
         );
         return;
       }
@@ -397,7 +455,7 @@ export function PersonalizedRankPanel() {
           <FormField
             label="Kitchen video (optional)"
             id="video"
-            hint="Short cooking or countertop clip — mp4, mov, or webm, max about 20MB. Detect ingredients first to preview name, quantity, and confidence, or let Discover Recipes detect from the clip."
+            hint={videoUploadHint()}
           >
             <Input
               id="video"
@@ -405,16 +463,28 @@ export function PersonalizedRankPanel() {
               accept="video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm"
               onChange={(e) => {
                 // New/cleared file → drop stale detect so Discover won't reuse it.
-                setVideoFile(e.target.files?.[0] ?? null);
+                const next = e.target.files?.[0] ?? null;
+                setVideoFile(next);
                 setDetection(null);
                 setEmptyMessage(null);
-                setError(null);
+                if (next && next.size > MAX_VIDEO_BYTES) {
+                  setError(videoTooLargeMessage(next.size));
+                } else {
+                  setError(null);
+                }
               }}
             />
             {videoFile && (
-              <p className="mt-1 text-xs text-neutral/70">
-                Selected: {videoFile.name} (
-                {(videoFile.size / (1024 * 1024)).toFixed(1)} MB)
+              <p
+                className={`mt-1 text-xs ${
+                  videoOversized ? "text-red-700" : "text-neutral/70"
+                }`}
+              >
+                Selected: {videoFile.name} ({formatMegabytes(videoFile.size)}
+                {videoOversized
+                  ? ` — over the ${Math.round(MAX_VIDEO_BYTES / (1024 * 1024))} MB limit`
+                  : ""}
+                )
               </p>
             )}
           </FormField>
@@ -422,7 +492,7 @@ export function PersonalizedRankPanel() {
           <Button
             type="button"
             variant="secondary"
-            disabled={busy || !videoFile}
+            disabled={busy || !videoFile || videoOversized}
             className="w-full"
             onClick={() => void handleDetectVideo()}
           >
@@ -459,7 +529,11 @@ export function PersonalizedRankPanel() {
             />
           </FormField>
 
-          <Button type="submit" disabled={busy} className="w-full">
+          <Button
+            type="submit"
+            disabled={busy || videoOversized}
+            className="w-full"
+          >
             {loading
               ? videoFile && !(detection?.ingredients.length)
                 ? "Detecting ingredients and finding recipes..."

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   buildRecommendResponseCacheKey,
   normalizeIngredientList,
@@ -112,7 +112,19 @@ describe("recommend latency knobs", () => {
     } = await import("@/lib/recommend");
     expect(RECOMMEND_CANDIDATE_COUNT).toBe(12);
     expect(RECOMMEND_RESPONSE_CACHE_TTL).toBe(60 * 12);
-    expect(isRecommendUsdaEnabled()).toBe(false);
+    expect(isRecommendUsdaEnabled()).toBe(true);
+  });
+
+  it("allows opting out of USDA via RECOMMEND_ENABLE_USDA", async () => {
+    const { isRecommendUsdaEnabled } = await import("@/lib/recommend");
+    for (const value of ["false", "0", "off", "no", "FALSE", " Off "]) {
+      vi.stubEnv("RECOMMEND_ENABLE_USDA", value);
+      expect(isRecommendUsdaEnabled()).toBe(false);
+    }
+    vi.stubEnv("RECOMMEND_ENABLE_USDA", "true");
+    expect(isRecommendUsdaEnabled()).toBe(true);
+    vi.unstubAllEnvs();
+    expect(isRecommendUsdaEnabled()).toBe(true);
   });
 
   it("defaults RECOMMEND_RANK_MODE to heuristic (Gemini off)", async () => {

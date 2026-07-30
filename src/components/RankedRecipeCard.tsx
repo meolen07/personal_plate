@@ -24,6 +24,15 @@ interface RankedRecipeCardProps {
   }) => void;
 }
 
+function hasDisplayableNutrition(recipe: RankedRecipeRecommendation): boolean {
+  return (
+    recipe.calories > 0 ||
+    recipe.protein > 0 ||
+    recipe.fat > 0 ||
+    recipe.carbs > 0
+  );
+}
+
 function IngredientTags({
   items,
   tone,
@@ -209,18 +218,26 @@ export function RankedRecipeCard({
           </div>
 
           <div className="flex flex-wrap gap-2 text-xs">
-            <span className="rounded-full bg-sand px-3 py-1 text-neutral/80">
-              {recipe.calories} kcal
-            </span>
-            <span className="rounded-full bg-sand px-3 py-1 text-neutral/80">
-              P {recipe.protein}g
-            </span>
-            <span className="rounded-full bg-sand px-3 py-1 text-neutral/80">
-              F {recipe.fat}g
-            </span>
-            <span className="rounded-full bg-sand px-3 py-1 text-neutral/80">
-              C {recipe.carbs}g
-            </span>
+            {hasDisplayableNutrition(recipe) ? (
+              <>
+                <span className="rounded-full bg-sand px-3 py-1 text-neutral/80">
+                  {recipe.calories} kcal
+                </span>
+                <span className="rounded-full bg-sand px-3 py-1 text-neutral/80">
+                  P {recipe.protein}g
+                </span>
+                <span className="rounded-full bg-sand px-3 py-1 text-neutral/80">
+                  F {recipe.fat}g
+                </span>
+                <span className="rounded-full bg-sand px-3 py-1 text-neutral/80">
+                  C {recipe.carbs}g
+                </span>
+              </>
+            ) : (
+              <span className="rounded-full bg-sand px-3 py-1 text-neutral/60">
+                Nutrition unavailable
+              </span>
+            )}
             {recipe.readyInMinutes > 0 && (
               <span className="rounded-full bg-sand px-3 py-1 text-neutral/80">
                 {recipe.readyInMinutes} min

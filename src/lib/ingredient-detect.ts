@@ -9,6 +9,12 @@ import type {
   DetectedIngredient,
   IngredientDetectionResult,
 } from "@/lib/types";
+import {
+  MAX_VIDEO_BYTES,
+  videoTooLargeMessage,
+} from "@/lib/video-upload";
+
+export { MAX_VIDEO_BYTES } from "@/lib/video-upload";
 
 export const ALLOWED_VIDEO_MIME_TYPES = [
   "video/mp4",
@@ -17,8 +23,6 @@ export const ALLOWED_VIDEO_MIME_TYPES = [
 ] as const;
 
 export type AllowedVideoMimeType = (typeof ALLOWED_VIDEO_MIME_TYPES)[number];
-
-const MAX_VIDEO_BYTES = 20 * 1024 * 1024;
 
 const DETECTION_PROMPT = `You are a kitchen vision assistant. Analyze this short cooking/fridge video and extract what you can see.
 
@@ -123,7 +127,7 @@ export async function detectIngredientsFromVideo(input: {
 
   if (input.buffer.byteLength > MAX_VIDEO_BYTES) {
     throw new GeminiError(
-      "Video file is too large. Please upload a video under 20MB.",
+      videoTooLargeMessage(input.buffer.byteLength),
       "validation"
     );
   }

@@ -78,17 +78,32 @@ function mapIntolerances(profile: Profile | null): string | undefined {
   return mapped.length ? [...new Set(mapped)].join(",") : undefined;
 }
 
+/** Parse Spoonacular nutrient amounts (number or strings like "20g" / "584.3"). */
+function parseNutrientValue(value: unknown): number {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return Math.round(value);
+  }
+  if (typeof value === "string") {
+    const match = value.replace(/,/g, "").match(/-?\d+(\.\d+)?/);
+    if (match) {
+      const parsed = Number(match[0]);
+      if (Number.isFinite(parsed)) return Math.round(parsed);
+    }
+  }
+  return 0;
+}
+
 function nutrientAmount(
-  nutrients: Array<{ name?: string; amount?: number }> | undefined,
-  name: string
+  nutrients: Array<{ name?: string; amount?: unknown }> | undefined,
+  names: string[]
 ): number {
-  if (!nutrients) return 0;
-  const match = nutrients.find(
-    (n) => (n.name ?? "").toLowerCase() === name.toLowerCase()
+  if (!nutrients?.length) return 0;
+  const targets = names.map((n) => n.toLowerCase());
+  const exact = nutrients.find((n) =>
+    targets.includes((n.name ?? "").toLowerCase())
   );
-  return typeof match?.amount === "number" && Number.isFinite(match.amount)
-    ? Math.round(match.amount)
-    : 0;
+  if (exact) return parseNutrientValue(exact.amount);
+  return 0;
 }
 
 function extractInstructions(recipe: Record<string, unknown>): string[] {
@@ -131,23 +146,52 @@ function extractIngredients(recipe: Record<string, unknown>): string[] {
   return [];
 }
 
-function extractNutrition(recipe: Record<string, unknown>): RecipeNutrition {
+/**
+ * Map Spoonacular nutrition from nested `nutrition.nutrients` and/or flat
+ * top-level calorie/macro fields used by some search shapes.
+ */
+export function extractSpoonacularNutrition(
+  recipe: Record<string, unknown>
+): RecipeNutrition {
   const nutrition = recipe.nutrition as
-    | { nutrients?: Array<{ name?: string; amount?: number }> }
+    | { nutrients?: Array<{ name?: string; amount?: unknown }> }
     | undefined;
   const nutrients = nutrition?.nutrients;
 
+  const fromNutrients: RecipeNutrition = {
+    calories: nutrientAmount(nutrients, ["Calories", "Energy"]),
+    protein: nutrientAmount(nutrients, ["Protein"]),
+    fat: nutrientAmount(nutrients, ["Fat", "Total Fat", "Total lipid"]),
+    carbs: nutrientAmount(nutrients, [
+      "Carbohydrates",
+      "Carbohydrate",
+      "Net Carbohydrates",
+      "Carbs",
+    ]),
+    fiber: nutrientAmount(nutrients, ["Fiber", "Fiber, total dietary"]),
+    sodium: nutrientAmount(nutrients, ["Sodium"]),
+  };
+
+  if (!isNutritionIncomplete(fromNutrients)) {
+    return fromNutrients;
+  }
+
+  // Flat fields (e.g. findByNutrients-style or partial search payloads).
   return {
-    calories: nutrientAmount(nutrients, "Calories"),
-    protein: nutrientAmount(nutrients, "Protein"),
-    fat: nutrientAmount(nutrients, "Fat"),
-    carbs: nutrientAmount(nutrients, "Carbohydrates"),
-    fiber: nutrientAmount(nutrients, "Fiber"),
-    sodium: nutrientAmount(nutrients, "Sodium"),
+    calories:
+      parseNutrientValue(recipe.calories) || fromNutrients.calories,
+    protein: parseNutrientValue(recipe.protein) || fromNutrients.protein,
+    fat: parseNutrientValue(recipe.fat) || fromNutrients.fat,
+    carbs:
+      parseNutrientValue(recipe.carbs) ||
+      parseNutrientValue(recipe.carbohydrates) ||
+      fromNutrients.carbs,
+    fiber: fromNutrients.fiber,
+    sodium: fromNutrients.sodium,
   };
 }
 
-function isNutritionIncomplete(nutrition: RecipeNutrition): boolean {
+export function isNutritionIncomplete(nutrition: RecipeNutrition): boolean {
   return (
     nutrition.calories <= 0 &&
     nutrition.protein <= 0 &&
@@ -157,7 +201,7 @@ function isNutritionIncomplete(nutrition: RecipeNutrition): boolean {
 }
 
 function normalizeCandidate(raw: Record<string, unknown>): SpoonacularRecipeCandidate {
-  const nutrition = extractNutrition(raw);
+  const nutrition = extractSpoonacularNutrition(raw);
 
   return {
     id: typeof raw.id === "number" ? raw.id : Number(raw.id) || 0,
@@ -400,6 +444,9 @@ export async function searchSpoonacularRecipes(input: {
     maxReadyTime: input.maxReadyTime,
     ranking: 1,
     sort: "max-used-ingredients",
+    // Bust caches that may have been stored without nutrition payloads.
+    addRecipeNutrition: true,
+    nutritionV: 2,
   });
 
   const cached = await cacheGet<SpoonacularRecipeCandidate[]>(cacheId);
@@ -450,7 +497,11 @@ export async function searchSpoonacularRecipes(input: {
 export async function getSpoonacularRecipeById(
   id: number
 ): Promise<SpoonacularRecipeCandidate | null> {
-  const cacheId = cacheKey("spoonacular:detail", { id });
+  const cacheId = cacheKey("spoonacular:detail", {
+    id,
+    includeNutrition: true,
+    nutritionV: 2,
+  });
   const cached = await cacheGet<SpoonacularRecipeCandidate>(cacheId);
   if (cached) {
     return cached;
@@ -465,4 +516,57 @@ export async function getSpoonacularRecipeById(
   return candidate;
 }
 
-export { isNutritionIncomplete };
+/**
+ * When complexSearch nutrition is missing/zero, pull Get Recipe Information
+ * (includeNutrition) for a small top set — prefers Spoonacular over USDA.
+ */
+export const SPOONACULAR_NUTRITION_BACKFILL_MAX = 6;
+
+export async function backfillIncompleteNutritionFromSpoonacular(
+  candidates: SpoonacularRecipeCandidate[],
+  limit = SPOONACULAR_NUTRITION_BACKFILL_MAX
+): Promise<SpoonacularRecipeCandidate[]> {
+  const needsBackfill = candidates
+    .map((candidate, index) => ({ candidate, index }))
+    .filter(({ candidate }) => isNutritionIncomplete(candidate.nutrition))
+    .slice(0, Math.max(0, limit));
+
+  if (needsBackfill.length === 0) {
+    return candidates;
+  }
+
+  const filledByIndex = new Map<number, SpoonacularRecipeCandidate>();
+
+  await Promise.all(
+    needsBackfill.map(async ({ candidate, index }) => {
+      try {
+        const detail = await getSpoonacularRecipeById(candidate.id);
+        if (!detail || isNutritionIncomplete(detail.nutrition)) {
+          return;
+        }
+        filledByIndex.set(index, {
+          ...candidate,
+          nutrition: detail.nutrition,
+          ingredients:
+            candidate.ingredients.length > 0
+              ? candidate.ingredients
+              : detail.ingredients,
+          instructions:
+            candidate.instructions.length > 0
+              ? candidate.instructions
+              : detail.instructions,
+        });
+      } catch {
+        // Keep original candidate; USDA may still gap-fill if enabled.
+      }
+    })
+  );
+
+  if (filledByIndex.size === 0) {
+    return candidates;
+  }
+
+  return candidates.map(
+    (candidate, index) => filledByIndex.get(index) ?? candidate
+  );
+}

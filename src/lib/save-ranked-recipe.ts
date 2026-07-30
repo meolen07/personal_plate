@@ -68,12 +68,20 @@ export function toRecommendedRecipeFromRanked(
     }
   }
 
-  const nutritionParts = [
-    `${Math.round(ranked.calories)} kcal`,
-    `Protein ${Math.round(ranked.protein)}g`,
-    `Fat ${Math.round(ranked.fat)}g`,
-    `Carbs ${Math.round(ranked.carbs)}g`,
-  ];
+  const hasNutrition =
+    ranked.calories > 0 ||
+    ranked.protein > 0 ||
+    ranked.fat > 0 ||
+    ranked.carbs > 0;
+
+  const nutritionParts = hasNutrition
+    ? [
+        `${Math.round(ranked.calories)} kcal`,
+        `Protein ${Math.round(ranked.protein)}g`,
+        `Fat ${Math.round(ranked.fat)}g`,
+        `Carbs ${Math.round(ranked.carbs)}g`,
+      ]
+    : ["Nutrition unavailable"];
 
   return {
     title: ranked.title.trim() || "Untitled ranked recipe",

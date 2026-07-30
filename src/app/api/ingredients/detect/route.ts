@@ -2,6 +2,12 @@ import { NextResponse } from "next/server";
 import { getUser } from "@/lib/auth";
 import { GeminiError, geminiErrorHttpStatus } from "@/lib/gemini-client";
 import { detectIngredientsFromVideo } from "@/lib/ingredient-detect";
+import {
+  MAX_VIDEO_BYTES,
+  VERCEL_SAFE_VIDEO_BYTES,
+  vercelPayloadTooLargeMessage,
+  videoTooLargeMessage,
+} from "@/lib/video-upload";
 
 export const runtime = "nodejs";
 
@@ -15,6 +21,22 @@ export async function POST(request: Request) {
   try {
     formData = await request.formData();
   } catch {
+    const contentLength = Number(request.headers.get("content-length") ?? NaN);
+    if (Number.isFinite(contentLength) && contentLength > MAX_VIDEO_BYTES) {
+      return NextResponse.json(
+        { error: videoTooLargeMessage(contentLength) },
+        { status: 400 }
+      );
+    }
+    if (
+      Number.isFinite(contentLength) &&
+      contentLength > VERCEL_SAFE_VIDEO_BYTES
+    ) {
+      return NextResponse.json(
+        { error: vercelPayloadTooLargeMessage() },
+        { status: 400 }
+      );
+    }
     return NextResponse.json(
       { error: "Expected multipart form data with a video file." },
       { status: 400 }
@@ -25,6 +47,13 @@ export async function POST(request: Request) {
   if (!(file instanceof File)) {
     return NextResponse.json(
       { error: "A video file field named 'video' (or 'file') is required." },
+      { status: 400 }
+    );
+  }
+
+  if (file.size > MAX_VIDEO_BYTES) {
+    return NextResponse.json(
+      { error: videoTooLargeMessage(file.size) },
       { status: 400 }
     );
   }

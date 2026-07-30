@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   clampSpoonacularSearchNumber,
+  extractSpoonacularNutrition,
   isNutritionIncomplete,
   SPOONACULAR_INGREDIENT_LIMIT,
   trimIngredientsForSpoonacularSearch,
@@ -27,6 +28,66 @@ describe("isNutritionIncomplete", () => {
         carbs: 0,
       })
     ).toBe(false);
+  });
+});
+
+describe("extractSpoonacularNutrition", () => {
+  it("reads nested nutrition.nutrients amounts", () => {
+    expect(
+      extractSpoonacularNutrition({
+        nutrition: {
+          nutrients: [
+            { name: "Calories", amount: 430.4 },
+            { name: "Protein", amount: 35.2 },
+            { name: "Fat", amount: 12.1 },
+            { name: "Carbohydrates", amount: 38.6 },
+          ],
+        },
+      })
+    ).toEqual({
+      calories: 430,
+      protein: 35,
+      fat: 12,
+      carbs: 39,
+      fiber: 0,
+      sodium: 0,
+    });
+  });
+
+  it("parses string nutrient amounts and alternate fat/carb names", () => {
+    expect(
+      extractSpoonacularNutrition({
+        nutrition: {
+          nutrients: [
+            { name: "Calories", amount: "584 kcal" },
+            { name: "Protein", amount: "19g" },
+            { name: "Total Fat", amount: "20g" },
+            { name: "Carbohydrate", amount: "84g" },
+          ],
+        },
+      })
+    ).toMatchObject({
+      calories: 584,
+      protein: 19,
+      fat: 20,
+      carbs: 84,
+    });
+  });
+
+  it("falls back to flat top-level calorie/macro fields", () => {
+    expect(
+      extractSpoonacularNutrition({
+        calories: 521,
+        protein: "35g",
+        fat: "10g",
+        carbs: "69g",
+      })
+    ).toMatchObject({
+      calories: 521,
+      protein: 35,
+      fat: 10,
+      carbs: 69,
+    });
   });
 });
 

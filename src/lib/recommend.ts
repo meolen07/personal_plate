@@ -2,8 +2,10 @@ import { cacheGet, cacheKey, cacheSet } from "@/lib/cache";
 import { detectIngredientsFromVideo } from "@/lib/ingredient-detect";
 import { rankRecipeCandidates } from "@/lib/recipe-rank";
 import {
+  backfillIncompleteNutritionFromSpoonacular,
   isNutritionIncomplete,
   searchSpoonacularRecipes,
+  SPOONACULAR_NUTRITION_BACKFILL_MAX,
 } from "@/lib/spoonacular";
 import { estimateRecipeNutritionFromUsda, UsdaError } from "@/lib/usda";
 import type {
@@ -20,15 +22,23 @@ export const RECOMMEND_CANDIDATE_COUNT = 12;
 export const RECOMMEND_RESPONSE_CACHE_TTL = 60 * 12;
 
 /**
- * Cap USDA gap-fills when enabled. Hot path skips USDA by default
- * (`RECOMMEND_ENABLE_USDA` must be "1" / "true") — multi food lookups dominate latency.
+ * Cap USDA gap-fills (default ON). Multi food lookups dominate latency, so keep
+ * these caps tight. Opt out with `RECOMMEND_ENABLE_USDA=false` / `0` / `off`.
+ * Only runs after Spoonacular search + detail backfill still leave macros empty.
  */
 export const MAX_USDA_RECIPE_ENRICHMENTS = 3;
 
-/** Whether recommend hot path may call USDA for incomplete Spoonacular nutrition. */
+/** Keep USDA ingredient lookups tiny on the default enrichment path. */
+export const MAX_USDA_INGREDIENTS_PER_RECIPE = 3;
+
+/**
+ * Whether recommend may call USDA for incomplete Spoonacular nutrition.
+ * Default ON when unset; set `RECOMMEND_ENABLE_USDA` to false/0/off/no to disable.
+ */
 export function isRecommendUsdaEnabled(): boolean {
   const raw = process.env.RECOMMEND_ENABLE_USDA?.trim().toLowerCase();
-  return raw === "1" || raw === "true" || raw === "yes";
+  if (!raw) return true;
+  return !(raw === "0" || raw === "false" || raw === "off" || raw === "no");
 }
 
 export function normalizeIngredientList(values: string[]): string[] {
@@ -88,10 +98,12 @@ export function buildRecommendResponseCacheKey(input: {
       .sort(),
     profile: profileCachePayload(input.profile),
     maxReadyTime: input.maxReadyTime ?? null,
+    // Bust response caches that may have stored 0-macro recipes.
+    nutritionV: 2,
   });
 }
 
-async function enrichNutrition(
+async function enrichNutritionFromUsda(
   candidates: SpoonacularRecipeCandidate[]
 ): Promise<SpoonacularRecipeCandidate[]> {
   if (!isRecommendUsdaEnabled()) {
@@ -113,7 +125,7 @@ async function enrichNutrition(
     needsEnrichment.map(async ({ candidate, index }) => {
       try {
         const usda = await estimateRecipeNutritionFromUsda(
-          candidate.ingredients,
+          candidate.ingredients.slice(0, MAX_USDA_INGREDIENTS_PER_RECIPE),
           candidate.servings || 1
         );
         if (!usda) {
@@ -138,6 +150,20 @@ async function enrichNutrition(
   return candidates.map(
     (candidate, index) => enrichedByIndex.get(index) ?? candidate
   );
+}
+
+/**
+ * Prefer Spoonacular nutrition (search → detail backfill), then USDA gap-fill
+ * (default ON; disable via RECOMMEND_ENABLE_USDA).
+ */
+async function enrichNutrition(
+  candidates: SpoonacularRecipeCandidate[]
+): Promise<SpoonacularRecipeCandidate[]> {
+  const withSpoonacular = await backfillIncompleteNutritionFromSpoonacular(
+    candidates,
+    SPOONACULAR_NUTRITION_BACKFILL_MAX
+  );
+  return enrichNutritionFromUsda(withSpoonacular);
 }
 
 export async function recommendRecipes(input: {

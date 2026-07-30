@@ -69,6 +69,18 @@ describe("toRecommendedRecipeFromRanked", () => {
     );
   });
 
+  it("records Nutrition unavailable when macros are all zero", () => {
+    const mapped = toRecommendedRecipeFromRanked({
+      ...sampleRanked,
+      calories: 0,
+      protein: 0,
+      fat: 0,
+      carbs: 0,
+    });
+    expect(mapped.nutrition_notes).toContain("Nutrition unavailable");
+    expect(mapped.nutrition_notes).not.toContain("0 kcal");
+  });
+
   it("handles empty ingredient lists", () => {
     const mapped = toRecommendedRecipeFromRanked({
       ...sampleRanked,

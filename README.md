@@ -2,8 +2,6 @@
 
 Personalized recipe assistant for safer meal suggestions, ingredient substitutions, profile-aware guidance, and AI video-based fridge/kitchen recommendations.
 
-> **Hướng dẫn tiếng Việt (setup từng bước):** xem [`HUONG-DAN.md`](./HUONG-DAN.md).
-
 > **Medical Disclaimer:** PersonalPlate provides general nutrition support and does not replace medical advice from doctors or registered dietitians.
 
 ## Features
@@ -73,7 +71,8 @@ Fill in:
 | `GEMINI_API_KEY_FALLBACK` | No | Secondary Gemini key |
 | `NEXT_PUBLIC_GEMINI_API_KEY` | No* | Browser image generation flows |
 | `SPOONACULAR_API_KEY` | For recommend API | Candidate recipe search |
-| `USDA_API_KEY` | No | Nutrition fill-in when Spoonacular data is incomplete |
+| `USDA_API_KEY` | No | Nutrition fill-in when Spoonacular data is incomplete (ON by default when set) |
+| `RECOMMEND_ENABLE_USDA` | No | Default ON; set `false` / `0` / `off` to skip USDA on recommend |
 | `REDIS_URL` | No | Shared Redis cache; in-memory used otherwise |
 
 \*Needed if you use client-side recipe image generation.
@@ -124,7 +123,7 @@ npm start
 
 ### `POST /api/ingredients/detect`
 
-Authenticated. Multipart form with a video field (`video` or `file`). Accepts **mp4**, **mov**, **webm** (max ~20MB).
+Authenticated. Multipart form with a video field (`video` or `file`). Accepts **mp4**, **mov**, **webm** (app max ~20MB). On **Vercel**, request bodies are capped at **~4.5MB** — prefer clips under ~4MB or uploads fail with 413 before the route runs.
 
 ```bash
 curl -X POST http://localhost:3000/api/ingredients/detect \
