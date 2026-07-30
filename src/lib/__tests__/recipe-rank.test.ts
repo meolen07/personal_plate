@@ -1,9 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildMatchReason,
   heuristicMatch,
+  ingredientsOverlap,
+  preferIngredientMatches,
   rankRecipesHeuristically,
+  reconcileReason,
+  singularizeToken,
 } from "@/lib/recipe-rank";
-import type { Profile, SpoonacularRecipeCandidate } from "@/lib/types";
+import type { Profile, RankedRecipeRecommendation, SpoonacularRecipeCandidate } from "@/lib/types";
 
 const profile: Profile = {
   full_name: "Test",
@@ -42,6 +47,55 @@ function candidate(
   };
 }
 
+function rankedStub(
+  overrides: Partial<RankedRecipeRecommendation> & { id: number; title: string }
+): RankedRecipeRecommendation {
+  return {
+    image: "",
+    score: 50,
+    calories: 400,
+    protein: 20,
+    fat: 10,
+    carbs: 30,
+    readyInMinutes: 20,
+    matchedIngredients: [],
+    missingIngredients: ["salt"],
+    reason: "placeholder",
+    instructions: [],
+    ingredients: [],
+    ...overrides,
+  };
+}
+
+describe("singularizeToken", () => {
+  it("handles common culinary plurals", () => {
+    expect(singularizeToken("zucchinis")).toBe("zucchini");
+    expect(singularizeToken("tomatoes")).toBe("tomato");
+    expect(singularizeToken("berries")).toBe("berry");
+    expect(singularizeToken("dishes")).toBe("dish");
+    expect(singularizeToken("asparagus")).toBe("asparagus");
+  });
+});
+
+describe("ingredientsOverlap", () => {
+  it("matches zucchini to quantity + plural + comma descriptor", () => {
+    expect(ingredientsOverlap("zucchini", "3 Zucchinis, rinsed")).toBe(true);
+    expect(ingredientsOverlap("Zucchini", "2 cups zucchinis")).toBe(true);
+  });
+
+  it("matches through units and multi-word pantry items", () => {
+    expect(ingredientsOverlap("chicken", "2 cups chicken breast")).toBe(true);
+    expect(ingredientsOverlap("garlic", "1 tsp garlic")).toBe(true);
+    expect(ingredientsOverlap("chicken breast", "chicken")).toBe(true);
+  });
+
+  it("does not false-positive on substring token traps", () => {
+    expect(ingredientsOverlap("egg", "eggplant")).toBe(false);
+    expect(ingredientsOverlap("oil", "boiling water")).toBe(false);
+    expect(ingredientsOverlap("salt", "saltine crackers")).toBe(false);
+  });
+});
+
 describe("heuristicMatch", () => {
   it("matches pantry items through quantity/unit prefixes", () => {
     const { matched, missing } = heuristicMatch(
@@ -50,6 +104,72 @@ describe("heuristicMatch", () => {
     );
     expect(matched).toEqual(["2 cups chicken breast", "1 tsp garlic"]);
     expect(missing).toEqual(["soy sauce"]);
+  });
+
+  it("matches zucchini against 3 Zucchinis, rinsed", () => {
+    const { matched, missing } = heuristicMatch(
+      ["zucchini"],
+      ["3 Zucchinis, rinsed", "olive oil", "salt"]
+    );
+    expect(matched).toEqual(["3 Zucchinis, rinsed"]);
+    expect(missing).toEqual(["olive oil", "salt"]);
+  });
+});
+
+describe("reconcileReason", () => {
+  it("replaces Gemini claims when local match is empty", () => {
+    const reason = reconcileReason(
+      "Leverages the available zucchini",
+      [],
+      1
+    );
+    expect(reason).toBe(buildMatchReason([], 1));
+    expect(reason.toLowerCase()).not.toContain("zucchini");
+  });
+
+  it("keeps Gemini reason when matches exist", () => {
+    expect(
+      reconcileReason("Great high-protein fit using salmon.", ["salmon"], 2)
+    ).toBe("Great high-protein fit using salmon.");
+  });
+});
+
+describe("preferIngredientMatches", () => {
+  it("filters out zero-match recipes when pantry items exist", () => {
+    const filtered = preferIngredientMatches(
+      [
+        rankedStub({
+          id: 1,
+          title: "No Match Soup",
+          matchedIngredients: [],
+          score: 90,
+        }),
+        rankedStub({
+          id: 2,
+          title: "Zucchini Chips",
+          matchedIngredients: ["3 Zucchinis, rinsed"],
+          score: 70,
+        }),
+      ],
+      1
+    );
+    expect(filtered).toHaveLength(1);
+    expect(filtered[0].id).toBe(2);
+  });
+
+  it("keeps a few low-scored recipes when everything is zero-match", () => {
+    const filtered = preferIngredientMatches(
+      [
+        rankedStub({ id: 1, title: "A", matchedIngredients: [], score: 80 }),
+        rankedStub({ id: 2, title: "B", matchedIngredients: [], score: 70 }),
+      ],
+      2
+    );
+    expect(filtered.length).toBeGreaterThan(0);
+    expect(filtered.every((r) => r.score <= 12)).toBe(true);
+    expect(filtered.every((r) => r.reason.includes("Limited pantry"))).toBe(
+      true
+    );
   });
 });
 
@@ -74,7 +194,7 @@ describe("rankRecipesHeuristically", () => {
     expect(ranked[0].title).toBe("Lemon Salmon");
     expect(ranked[0].id).toBe(1);
     expect(ranked[0].instructions).toEqual(["Cook"]);
-    expect(ranked[0].score).toBeGreaterThan(ranked[1].score);
+    expect(ranked[0].score).toBeGreaterThan(ranked[1]?.score ?? -1);
     expect(ranked[0].matchedIngredients.length).toBeGreaterThan(0);
   });
 
@@ -114,6 +234,51 @@ describe("rankRecipesHeuristically", () => {
     );
   });
 
+  it("filters zero-match recipes when the user has pantry ingredients", () => {
+    const withZucchini = candidate({
+      id: 1,
+      title: "Baked Zucchini Chips",
+      ingredients: ["3 Zucchinis, rinsed", "olive oil", "salt"],
+    });
+    const noOverlap = candidate({
+      id: 2,
+      title: "Peanut Noodles",
+      ingredients: ["rice noodles", "peanut sauce", "lime"],
+      nutrition: { calories: 500, protein: 15, fat: 20, carbs: 60 },
+    });
+
+    const ranked = rankRecipesHeuristically(profile, ["zucchini"], [
+      noOverlap,
+      withZucchini,
+    ]);
+
+    expect(ranked.every((r) => r.matchedIngredients.length > 0)).toBe(true);
+    expect(ranked[0].id).toBe(1);
+    expect(ranked.some((r) => r.id === 2)).toBe(false);
+  });
+
+  it("ranks a zero-match recipe below a matching one before filter", () => {
+    const withMatch = candidate({
+      id: 1,
+      title: "Garlic Chicken",
+      ingredients: ["chicken", "garlic", "rice"],
+    });
+    const zeroMatch = candidate({
+      id: 2,
+      title: "Tofu Bowl",
+      ingredients: ["tofu", "soy sauce", "sesame"],
+    });
+
+    const ranked = rankRecipesHeuristically(
+      profile,
+      ["chicken", "garlic"],
+      [zeroMatch, withMatch]
+    );
+
+    expect(ranked[0].id).toBe(1);
+    expect(ranked[0].matchedIngredients.length).toBeGreaterThan(0);
+  });
+
   it("returns at most 10 recipes sorted by score", () => {
     const many = Array.from({ length: 12 }, (_, i) =>
       candidate({
@@ -129,7 +294,7 @@ describe("rankRecipesHeuristically", () => {
     );
 
     const ranked = rankRecipesHeuristically(profile, ["salmon"], many);
-    expect(ranked).toHaveLength(10);
+    expect(ranked.length).toBeLessThanOrEqual(10);
     for (let i = 1; i < ranked.length; i += 1) {
       expect(ranked[i - 1].score).toBeGreaterThanOrEqual(ranked[i].score);
     }
