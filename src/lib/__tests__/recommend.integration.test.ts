@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { clearMemoryCache } from "@/lib/cache";
 import type { Profile, SpoonacularRecipeCandidate } from "@/lib/types";
 
 const baseProfile: Profile = {
@@ -48,6 +49,7 @@ describe("recommendRecipes orchestration", () => {
     vi.resetModules();
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
+    clearMemoryCache();
   });
 
   it("merges manual + fridge ingredients, enriches nutrition, and ranks", async () => {
@@ -67,8 +69,10 @@ describe("recommendRecipes orchestration", () => {
       nutrition: { calories: 400, protein: 40, fat: 10, carbs: 20 },
     });
 
+    const searchSpoonacularRecipes = vi.fn(async () => [incomplete, complete]);
+
     vi.doMock("@/lib/spoonacular", () => ({
-      searchSpoonacularRecipes: vi.fn(async () => [incomplete, complete]),
+      searchSpoonacularRecipes,
       isNutritionIncomplete: (nutrition: {
         calories: number;
         protein: number;
@@ -134,17 +138,94 @@ describe("recommendRecipes orchestration", () => {
       profile: baseProfile,
       ingredients: ["salmon", "lemon"],
       fridgeItems: ["olive oil", "salmon"],
+      userId: "user-1",
     });
 
     expect(result.ingredientsUsed).toEqual(["salmon", "lemon", "olive oil"]);
     expect(estimateRecipeNutritionFromUsda).toHaveBeenCalled();
+    expect(estimateRecipeNutritionFromUsda).toHaveBeenCalledTimes(1);
     expect(rankRecipeCandidates).toHaveBeenCalled();
+    expect(searchSpoonacularRecipes).toHaveBeenCalledWith(
+      expect.objectContaining({ number: 20 })
+    );
     expect(result.recipes[0]).toMatchObject({
       title: "Lemon Salmon",
       score: 96,
       calories: 430,
       reason: "Strong profile fit",
     });
+
+    // Second identical call should hit the whole-response cache.
+    const cached = await recommendRecipes({
+      profile: baseProfile,
+      ingredients: ["salmon", "lemon"],
+      fridgeItems: ["olive oil", "salmon"],
+      userId: "user-1",
+    });
+    expect(cached.recipes[0]?.title).toBe("Lemon Salmon");
+    expect(searchSpoonacularRecipes).toHaveBeenCalledTimes(1);
+    expect(rankRecipeCandidates).toHaveBeenCalledTimes(1);
+  });
+
+  it("skips USDA when Spoonacular nutrition is already complete", async () => {
+    vi.stubEnv("SPOONACULAR_API_KEY", "test-spoonacular");
+    vi.stubEnv("USDA_API_KEY", "test-usda");
+    vi.stubEnv("GEMINI_API_KEY", "test-gemini");
+
+    const complete = makeCandidate({
+      id: 2,
+      title: "Herbed Chicken",
+      ingredients: ["chicken", "broccoli", "garlic"],
+      nutrition: { calories: 400, protein: 40, fat: 10, carbs: 20 },
+    });
+
+    vi.doMock("@/lib/spoonacular", () => ({
+      searchSpoonacularRecipes: vi.fn(async () => [complete]),
+      isNutritionIncomplete: () => false,
+    }));
+
+    const estimateRecipeNutritionFromUsda = vi.fn(async () => null);
+    vi.doMock("@/lib/usda", () => ({
+      UsdaError: class UsdaError extends Error {
+        code: string;
+        constructor(message: string, code: string) {
+          super(message);
+          this.code = code;
+        }
+      },
+      estimateRecipeNutritionFromUsda,
+    }));
+
+    vi.doMock("@/lib/recipe-rank", () => ({
+      rankRecipeCandidates: vi.fn(async ({ candidates }) =>
+        candidates.map((candidate: SpoonacularRecipeCandidate) => ({
+          title: candidate.title,
+          image: candidate.image,
+          score: 90,
+          calories: candidate.nutrition.calories,
+          protein: candidate.nutrition.protein,
+          fat: candidate.nutrition.fat,
+          carbs: candidate.nutrition.carbs,
+          readyInMinutes: candidate.readyInMinutes,
+          matchedIngredients: [],
+          missingIngredients: [],
+          reason: "ok",
+        }))
+      ),
+    }));
+
+    vi.doMock("@/lib/ingredient-detect", () => ({
+      detectIngredientsFromVideo: vi.fn(),
+    }));
+
+    const { recommendRecipes } = await import("@/lib/recommend");
+    await recommendRecipes({
+      profile: baseProfile,
+      ingredients: ["chicken"],
+      userId: "user-skip-usda",
+    });
+
+    expect(estimateRecipeNutritionFromUsda).not.toHaveBeenCalled();
   });
 
   it("throws when no ingredients are provided", async () => {

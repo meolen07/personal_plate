@@ -4,6 +4,28 @@ PersonalPlate → Vercel + Supabase. Do **not** invent secrets; copy real values
 
 ---
 
+## 0. Profile DB migration (do this first on existing Supabase)
+
+**Symptom:** `/profile` Save fails with:
+
+> Could not find the `'activity_level'` column of `'profiles'` in the schema cache
+
+That means production still has an **old** `profiles` table. The app writes recommend fields that are not on the DB yet.
+
+**Fix (existing project):**
+1. Supabase Dashboard → **SQL Editor** → New query  
+2. Paste and run the full contents of `profile-recommendation-fields-migration.sql`  
+3. Wait a few seconds (or **Project Settings → API → Reload schema**)  
+4. Retry **Save** on `/profile`
+
+Columns added (idempotent `IF NOT EXISTS`): `nutrition_goals`, `preferred_cuisine`, `activity_level`, `target_calories`, `budget_usd`, `preferred_foods`, `disliked_foods`.
+
+**Fresh project:** running `supabase-schema.sql` already includes these columns — skip this migration.
+
+**Tiếng Việt:** Lỗi `activity_level` / schema cache = chưa chạy migration profile. Mở SQL Editor, chạy `profile-recommendation-fields-migration.sql`, đợi vài giây, Save lại.
+
+---
+
 ## 1. Vercel environment variables
 
 | Variable | Required? | Notes |
@@ -32,11 +54,11 @@ Template: `.env.example`. After changing env on Vercel → **Redeploy**.
 Do **not** need `fridge-items-migration.sql` or `profile-recommendation-fields-migration.sql` on a fresh install (already in schema).
 
 ### Existing project (already has older schema)
-1. `fridge-items-migration.sql` (if `fridge_items` missing)  
-2. `recipe-images-storage.sql`  
-3. `profile-recommendation-fields-migration.sql` (recommend profile columns)  
+1. **`profile-recommendation-fields-migration.sql` first** — otherwise `/profile` Save hits `activity_level` schema-cache error (see **§0** above)  
+2. `fridge-items-migration.sql` (if `fridge_items` missing)  
+3. `recipe-images-storage.sql`  
 
-**Tiếng Việt:** Project mới → schema rồi storage. Project cũ → migration fridge (nếu thiếu) → storage → migration profile recommend.
+**Tiếng Việt:** Project mới → schema rồi storage. Project cũ → **migration profile recommend trước** (tránh lỗi schema cache) → fridge (nếu thiếu) → storage.
 
 ---
 
@@ -76,7 +98,7 @@ Also enable **Email** provider: Authentication → Providers → Email.
 1. Push branch / merge to GitHub  
 2. Vercel → Import repo → set env vars above  
 3. Run SQL + bucket + Auth URLs on Supabase  
-4. Deploy → smoke-test signup, profile, fridge, AI Suggest, Personalized Rank  
+4. Deploy → smoke-test signup, profile, fridge, Recommend  
 
 Local verify before deploy:
 

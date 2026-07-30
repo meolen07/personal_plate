@@ -158,7 +158,15 @@ export default function ProfilePage() {
       );
 
     if (upsertError) {
-      setError(upsertError.message);
+      const msg = upsertError.message;
+      // PostgREST: production DB missing recommend columns (migration not run)
+      if (/schema cache|could not find the ['"].+['"] column/i.test(msg)) {
+        setError(
+          "Database schema is outdated (missing profile columns such as activity_level). In Supabase → SQL Editor, run profile-recommendation-fields-migration.sql, wait a few seconds (or Reload schema), then Save again. / Schema DB thiếu cột — chạy file migration trong Supabase SQL Editor rồi thử Save lại."
+        );
+      } else {
+        setError(msg);
+      }
     } else {
       setSuccess(true);
       setProfile({ ...profileData });

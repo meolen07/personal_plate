@@ -14,7 +14,7 @@ Personalized recipe assistant for safer meal suggestions, ingredient substitutio
 - **Video Ingredient Detection** — Upload mp4/mov/webm kitchen or fridge video; Gemini detects ingredients, quantities, tools, and cooking method (`/api/ingredients/detect`)
 - **Allergy-Safe Substitutions** — Detects unsafe ingredients and suggests alternatives
 - **Virtual Fridge** — Persist pantry items and reuse them in recommendation flows
-- **Recipe History** — Save AI Suggest or ranked recipes and revisit them on `/history`
+- **Recipe History** — Save recommended recipes and revisit them on `/history`
 - **Secure Auth** — Supabase authentication with row-level security
 - **Caching** — Redis when `REDIS_URL` is set; otherwise in-memory TTL cache for Spoonacular, USDA, and ranking results (not a full recommend-response cache)
 
@@ -109,16 +109,15 @@ npm start
 | `/login` | Sign in / sign up |
 | `/dashboard` | Protected dashboard |
 | `/profile` | Health profile form (includes BMI preview, activity, budget, prefs) |
-| `/recommend` | Meal suggestions — tab **AI Suggest** (Gemini) + tab **Personalized Rank** (Spoonacular + video) |
-| `/recommend?tab=ranked` | Same page, Personalized Rank tab pre-selected |
-| `/discover` | Redirects to `/recommend?tab=ranked` (legacy URL) |
+| `/recommend` | Meal suggestions (Spoonacular + ranking + video) |
+| `/discover` | Redirects to `/recommend` (legacy URL) |
 | `/fridge` | Virtual fridge |
-| `/history` | Saved recipes (AI Suggest + Personalized Rank) |
-| `/api/generate-recipes` | POST — Gemini meal suggestion generation (secondary) |
-| `/api/save-recipe` | POST — Save AI Suggest **or** ranked recipe to Supabase |
+| `/history` | Saved recipes |
+| `/api/generate-recipes` | POST — Gemini meal suggestion generation (kept; not on Recommend UI) |
+| `/api/save-recipe` | POST — Save ranked (or legacy AI Suggest) recipe to Supabase |
 | `/api/generate-recipe-image` | POST — Generate/store recipe image |
 | `/api/ingredients/detect` | POST — Authenticated video ingredient detection |
-| `/api/recipes/recommend` | POST — Personalized Rank (primary recommend path) |
+| `/api/recipes/recommend` | POST — Personalized recommend pipeline |
 | `/api/recipes/[id]` | GET — Spoonacular recipe detail (instructions / ingredients) |
 
 ## New API Endpoints

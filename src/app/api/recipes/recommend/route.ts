@@ -137,12 +137,19 @@ export async function POST(request: Request) {
     );
   }
 
-  if (includeFridge) {
-    const stored = await getFridgeItems(user.id);
-    fridgeItems = [...fridgeItems, ...stored.map((item) => item.name)];
-  }
+  const [profile, fridgeFromStore] = await Promise.all([
+    getProfile(user.id),
+    includeFridge
+      ? getFridgeItems(user.id)
+      : Promise.resolve([] as Awaited<ReturnType<typeof getFridgeItems>>),
+  ]);
 
-  const profile = await getProfile(user.id);
+  if (includeFridge) {
+    fridgeItems = [
+      ...fridgeItems,
+      ...fridgeFromStore.map((item) => item.name),
+    ];
+  }
 
   try {
     const result = await recommendRecipes({
@@ -151,6 +158,7 @@ export async function POST(request: Request) {
       fridgeItems,
       video,
       maxReadyTime,
+      userId: user.id,
     });
 
     return NextResponse.json({

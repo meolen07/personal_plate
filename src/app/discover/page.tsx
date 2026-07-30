@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 
-/** Legacy route — personalized ranking now lives on /recommend?tab=ranked */
+/** Legacy route — ranking now lives on /recommend */
 export default function DiscoverPage() {
-  redirect("/recommend?tab=ranked");
+  redirect("/recommend");
 }

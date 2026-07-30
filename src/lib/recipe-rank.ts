@@ -16,6 +16,17 @@ import type {
 const RANK_CACHE_TTL = 60 * 20;
 const MIN_RESULTS = 6;
 const MAX_RESULTS = 10;
+/** Cap Gemini / heuristic input — matches lean Spoonacular search size. */
+export const RANK_INPUT_LIMIT = 20;
+const RANK_INGREDIENT_LIMIT = 12;
+
+/** Prefer lighter models first for ranking latency. */
+export const RANK_GEMINI_MODELS = [
+  "gemini-2.5-flash-lite",
+  "gemini-2.5-flash",
+  "gemini-2.0-flash",
+  "gemini-2.0-flash-001",
+] as const;
 
 function buildRankingPrompt(
   profile: Profile | null,
@@ -48,7 +59,6 @@ Patient Profile:
     index,
     id: c.id,
     title: c.title,
-    image: c.image,
     readyInMinutes: c.readyInMinutes,
     calories: c.nutrition.calories,
     protein: c.nutrition.protein,
@@ -56,7 +66,7 @@ Patient Profile:
     carbs: c.nutrition.carbs,
     fiber: c.nutrition.fiber,
     sodium: c.nutrition.sodium,
-    ingredients: c.ingredients,
+    ingredients: c.ingredients.slice(0, RANK_INGREDIENT_LIMIT),
     cuisines: c.cuisines,
     diets: c.diets,
     pricePerServing: c.pricePerServing,
@@ -302,10 +312,11 @@ export async function rankRecipeCandidates(input: {
     return cached;
   }
 
-  const limitedCandidates = candidates.slice(0, 50);
+  const limitedCandidates = candidates.slice(0, RANK_INPUT_LIMIT);
 
   try {
     const text = await generateGeminiText({
+      models: RANK_GEMINI_MODELS,
       parts: [
         {
           text: buildRankingPrompt(

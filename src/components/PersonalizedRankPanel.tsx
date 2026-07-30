@@ -19,12 +19,28 @@ import type {
   RankedRecipeRecommendation,
 } from "@/lib/types";
 
+function mergeIngredientLists(existing: string[], detected: string[]): string[] {
+  const merged = [...existing];
+  for (const name of detected) {
+    const trimmed = name.trim();
+    if (!trimmed) continue;
+    if (
+      merged.some((item) => item.toLowerCase() === trimmed.toLowerCase())
+    ) {
+      continue;
+    }
+    merged.push(trimmed);
+  }
+  return merged;
+}
+
 export function PersonalizedRankPanel() {
   const [ingredients, setIngredients] = useState("");
   const [includeFridge, setIncludeFridge] = useState(true);
   const [maxReadyTime, setMaxReadyTime] = useState("");
   const [videoFile, setVideoFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
+  const [detecting, setDetecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [emptyMessage, setEmptyMessage] = useState<string | null>(null);
   const [recipes, setRecipes] = useState<RankedRecipeRecommendation[]>([]);
@@ -79,9 +95,22 @@ export function PersonalizedRankPanel() {
   }, []);
 
   const profileReadiness = assessProfileForRanking(profile);
+  const busy = loading || detecting;
 
   const handleUseFridgeIngredients = (fridgeItems: string[]) => {
     setIngredients(fridgeItems.join(", "));
+    setError(null);
+    setEmptyMessage(null);
+  };
+
+  const handleUseDetectedIngredients = () => {
+    if (!detection?.ingredients.length) return;
+    const detectedNames = detection.ingredients.map((item) => item.name);
+    setIngredients((current) =>
+      mergeIngredientLists(parseCommaSeparated(current), detectedNames).join(
+        ", "
+      )
+    );
     setError(null);
     setEmptyMessage(null);
   };
@@ -98,6 +127,69 @@ export function PersonalizedRankPanel() {
     },
     []
   );
+
+  const handleDetectVideo = async () => {
+    if (!videoFile) {
+      setError(
+        "Choose a short kitchen or fridge video first (mp4, mov, or webm)."
+      );
+      return;
+    }
+
+    setDetecting(true);
+    setError(null);
+    setEmptyMessage(null);
+    setDetection(null);
+
+    try {
+      const formData = new FormData();
+      formData.append("video", videoFile);
+
+      const response = await fetch("/api/ingredients/detect", {
+        method: "POST",
+        body: formData,
+      });
+      const data = await response.json();
+
+      if (!response.ok) {
+        setError(
+          typeof data.error === "string"
+            ? data.error
+            : "Failed to detect ingredients from video."
+        );
+        return;
+      }
+
+      const result =
+        data && typeof data === "object"
+          ? (data as IngredientDetectionResult)
+          : null;
+
+      if (!result || !Array.isArray(result.ingredients)) {
+        setError("Computer vision returned an unexpected response.");
+        return;
+      }
+
+      setDetection({
+        ingredients: result.ingredients,
+        cooking_method:
+          typeof result.cooking_method === "string"
+            ? result.cooking_method
+            : "none visible",
+        kitchen_tools: Array.isArray(result.kitchen_tools)
+          ? result.kitchen_tools.filter(
+              (tool): tool is string => typeof tool === "string"
+            )
+          : [],
+      });
+    } catch {
+      setError(
+        "Unable to run computer vision right now. Please check your connection and try again."
+      );
+    } finally {
+      setDetecting(false);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -239,9 +331,10 @@ export function PersonalizedRankPanel() {
   return (
     <>
       <p className="mb-6 text-neutral/70">
-        Upload a short kitchen/fridge video and/or list ingredients.
-        PersonalPlate searches Spoonacular candidates, fills nutrition gaps with
-        USDA when needed, and ranks the best matches for your health profile.
+        Use computer vision on a short kitchen/fridge video to detect
+        ingredients, and/or type them manually. PersonalPlate then searches
+        Spoonacular candidates, fills nutrition gaps with USDA when needed, and
+        ranks the best matches for your health profile.
       </p>
 
       {profileChecked && profileReadiness.status === "missing" && (
@@ -273,22 +366,32 @@ export function PersonalizedRankPanel() {
       <Card className="mb-8">
         <form onSubmit={handleSubmit} className="space-y-5">
           <FormField
-            label="Kitchen / Fridge Video (optional)"
+            label="Computer vision video (optional)"
             id="video"
-            hint="mp4, mov, or webm — max about 20MB"
+            hint="Short fridge or cooking clip — mp4, mov, or webm, max about 20MB. Gemini vision extracts ingredients with quantity and confidence."
           >
             <Input
               id="video"
               type="file"
               accept="video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm"
-              onChange={(e) => setVideoFile(e.target.files?.[0] ?? null)}
+              onChange={(e) => {
+                setVideoFile(e.target.files?.[0] ?? null);
+                setDetection(null);
+                setEmptyMessage(null);
+              }}
             />
+            {videoFile && (
+              <p className="mt-1 text-xs text-neutral/70">
+                Selected: {videoFile.name} (
+                {(videoFile.size / (1024 * 1024)).toFixed(1)} MB)
+              </p>
+            )}
           </FormField>
 
           <FormField
             label="Manual Ingredients (optional)"
             id="ranked-ingredients"
-            hint="Comma-separated. Combined with video detection and fridge when enabled."
+            hint="Comma-separated. Combined with computer vision detection and fridge when enabled."
           >
             <Textarea
               id="ranked-ingredients"
@@ -329,11 +432,28 @@ export function PersonalizedRankPanel() {
             </div>
           </div>
 
-          <Button type="submit" disabled={loading} className="w-full">
-            {loading ? "Finding recipes..." : "Discover Recipes"}
-          </Button>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Button
+              type="button"
+              variant="secondary"
+              disabled={busy || !videoFile}
+              className="w-full"
+              onClick={() => void handleDetectVideo()}
+            >
+              {detecting
+                ? "Scanning video..."
+                : "Detect ingredients (computer vision)"}
+            </Button>
+            <Button type="submit" disabled={busy} className="w-full">
+              {loading ? "Finding recipes..." : "Discover Recipes"}
+            </Button>
+          </div>
         </form>
       </Card>
+
+      {detecting && (
+        <LoadingSpinner message="Running computer vision on your kitchen video..." />
+      )}
 
       {loading && (
         <LoadingSpinner message="Reviewing your ingredients and profile to rank personalized recipes..." />
@@ -352,7 +472,7 @@ export function PersonalizedRankPanel() {
       )}
 
       {detection && (
-        <Alert variant="success" title="Video detection" className="mb-6">
+        <Alert variant="success" title="Computer vision results" className="mb-6">
           <p className="text-sm">
             Method: {detection.cooking_method || "none visible"}
           </p>
@@ -361,18 +481,34 @@ export function PersonalizedRankPanel() {
               Tools: {detection.kitchen_tools.join(", ")}
             </p>
           )}
-          {detection.ingredients.length > 0 && (
-            <ul className="mt-2 list-inside list-disc space-y-1 text-sm">
-              {detection.ingredients.map((item, index) => (
-                <li key={`${item.name}-${index}`}>
-                  {item.name}
-                  {item.estimated_quantity
-                    ? ` (${item.estimated_quantity})`
-                    : ""}{" "}
-                  — confidence {Math.round(item.confidence * 100)}%
-                </li>
-              ))}
-            </ul>
+          {detection.ingredients.length > 0 ? (
+            <>
+              <ul className="mt-2 list-inside list-disc space-y-1 text-sm">
+                {detection.ingredients.map((item, index) => (
+                  <li key={`${item.name}-${index}`}>
+                    {item.name}
+                    {item.estimated_quantity
+                      ? ` (${item.estimated_quantity})`
+                      : ""}{" "}
+                    — confidence {Math.round(item.confidence * 100)}%
+                  </li>
+                ))}
+              </ul>
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                className="mt-3"
+                onClick={handleUseDetectedIngredients}
+              >
+                Add detected ingredients to list
+              </Button>
+            </>
+          ) : (
+            <p className="mt-2 text-sm">
+              No edible ingredients were visible. Try a clearer fridge or
+              countertop clip, or type ingredients manually.
+            </p>
           )}
         </Alert>
       )}

@@ -231,13 +231,26 @@ async function spoonacularFetch(
   return payload;
 }
 
+/** Default / clamp for complexSearch — keep lean for recommend latency. */
+export const SPOONACULAR_SEARCH_DEFAULT = 20;
+export const SPOONACULAR_SEARCH_MIN = 12;
+export const SPOONACULAR_SEARCH_MAX = 30;
+
+export function clampSpoonacularSearchNumber(value?: number): number {
+  const fallback = value ?? SPOONACULAR_SEARCH_DEFAULT;
+  return Math.min(
+    Math.max(fallback, SPOONACULAR_SEARCH_MIN),
+    SPOONACULAR_SEARCH_MAX
+  );
+}
+
 export async function searchSpoonacularRecipes(input: {
   ingredients: string[];
   profile: Profile | null;
   number?: number;
   maxReadyTime?: number;
 }): Promise<SpoonacularRecipeCandidate[]> {
-  const number = Math.min(Math.max(input.number ?? 40, 30), 50);
+  const number = clampSpoonacularSearchNumber(input.number);
   const ingredients = input.ingredients
     .map((i) => i.trim().toLowerCase())
     .filter(Boolean);

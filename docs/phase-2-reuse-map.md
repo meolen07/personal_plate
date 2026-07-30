@@ -12,8 +12,8 @@
 
 | Vai trò | Đường | Entry points | Ghi chú |
 |--------|--------|--------------|--------|
-| **Primary** | Personalized Rank | UI: `/recommend?tab=ranked` → `PersonalizedRankPanel` → `POST /api/recipes/recommend` → `recommendRecipes()` | Spoonacular → USDA (gap fill) → Gemini ranking (+ heuristic fallback) |
-| **Secondary** | AI Suggest | UI: `/recommend` (tab mặc định) → `AiSuggestPanel` → `POST /api/generate-recipes` → `generateRecipeWithGemini()` | Giữ nguyên; không đụng trừ khi cần tương thích save/history |
+| **Primary** | Recommend | UI: `/recommend` → `PersonalizedRankPanel` → `POST /api/recipes/recommend` → `recommendRecipes()` | Spoonacular → USDA (gap fill) → Gemini ranking (+ heuristic fallback) |
+| **Secondary** | AI Suggest | UI removed from `/recommend`; API `POST /api/generate-recipes` + `AiSuggestPanel` kept in codebase | Giữ nguyên; không đụng trừ khi cần tương thích save/history |
 
 **Đã xác minh trong codebase:**
 
@@ -39,7 +39,7 @@
 
 1. Trường `fitness_goal` riêng — **SKIPPED** (dùng `nutrition_goals` + `activity_level` + BMI).
 2. Harden request validation (helper chặt hơn) trên `/api/recipes/recommend` — **SKIPPED** (không Zod; manual parsers đủ).
-3. Cache **toàn bộ** `RecipeRecommendResponse` — **SKIPPED**.
+3. Cache **toàn bộ** `RecipeRecommendResponse` — **DONE (latency):** `recommend:response` keyed by userId + ingredients + profile hash, TTL 8 phút (`src/lib/recommend.ts`).
 4. Mở rộng chi tiết món ranked (instructions đầy đủ từ Spoonacular detail) — **DONE (Phase 5)**.
 5. Tinh chỉnh prompt/heuristic ranking — **SKIPPED** (không còn pain được yêu cầu).
 
@@ -53,7 +53,7 @@
 6. Thêm env mới trừ khi user xác nhận (xem mục 4).
 7. **Phase 3 (`fitness_goal`)** — **SKIPPED**.
 8. **Phase 6 (Zod / validation harden)** — **SKIPPED**.
-9. **Phase 7 (e2e recommend cache)** — **SKIPPED**.
+9. **Phase 7 (e2e recommend cache)** — **DONE** (shipped for latency; TTL 8 phút).
 10. **Phase 8 (ranking quality tweaks)** — **SKIPPED**.
 
 ### 1.3 Quyết định tường minh — **ĐÃ XÁC NHẬN**
@@ -63,7 +63,7 @@
 | **`fitness_goal`?** | **A — Không thêm cột.** Giữ `nutrition_goals` + `activity_level` + BMI. | → **Phase 3 SKIPPED** |
 | **Save ranked recipes?** | **A — Có, must-have.** | → **Phase 4 (DONE)** |
 | **Meal plans?** | **A — Out-of-scope.** | — |
-| **End-to-end response cache?** | **A — Không.** | Giữ cache từng lớp |
+| **End-to-end response cache?** | **A — Không (ban đầu).** Sau user complaint latency → **DONE**. | `recommend:response` 8 phút |
 | **Zod validation?** | **A — Không.** | Giữ manual parsers |
 
 ---
@@ -80,7 +80,7 @@
 | **USDA** | Fill nutrition thiếu | `estimateRecipeNutritionFromUsda` | Key optional | — | **reuse** |
 | **Gemini ranking** | Rank 6–10 món | `rankRecipeCandidates` | Prompt tweaks | 8 **SKIPPED** | **reuse** |
 | **Heuristic fallback** | Khi Gemini fail | `rankRecipesHeuristically` | — | 8 **SKIPPED** | **reuse** |
-| **Cache** | Giảm quota/latency | `cache.ts`; namespaces spoonacular / usda / `gemini:rank` | E2E cache | 7 **SKIPPED** | **reuse** |
+| **Cache** | Giảm quota/latency | `cache.ts`; namespaces spoonacular / usda / `gemini:rank` / **`recommend:response`** | E2E cache | 7 **DONE** | **extended** |
 | **Recommend orchestration** | Ghép detect → search → USDA → rank | `recommendRecipes` | — | — | **reuse** |
 | **API routes** | HTTP surface | recommend; detect; save-recipe; `GET /api/recipes/[id]` | — | 4–5 **DONE** | **extended** |
 | **UI panels/cards** | UX recommend | `PersonalizedRankPanel`; `RankedRecipeCard` (+ Save + instructions) | — | 5 **DONE** | **extended** |
@@ -134,7 +134,7 @@
 | **4** | Save ranked → history | **DONE** |
 | **5** | UX Rank polish (detail/instructions + empty/profile) | **DONE** |
 | **6** | API harden / Zod | **SKIPPED** |
-| **7** | E2E response cache | **SKIPPED** |
+| **7** | E2E response cache | **DONE** (latency follow-up) |
 | **8** | Ranking quality tweaks | **SKIPPED** |
 | **9** | Tests bổ sung + docs | **DONE** |
 
@@ -147,7 +147,7 @@
 1. **`fitness_goal`:** **A)** Giữ `nutrition_goals` ✅ → Phase 3 skipped  
 2. **Save ranked recipes:** **A)** Có ✅ → Phase 4 done  
 3. **Meal plans nhiều ngày:** **A)** Out-of-scope ✅  
-4. **Cache toàn bộ response `recommendRecipes`:** **A)** Không ✅ → Phase 7 skipped  
+4. **Cache toàn bộ response `recommendRecipes`:** Ban đầu **A)** Không → Phase 7 skipped; **sau đó DONE** vì latency complaint (TTL 8 phút)  
 5. **Zod trên `/api/recipes/recommend`:** **A)** Không ✅ → Phase 6 skipped  
 
 ---
@@ -157,14 +157,15 @@
 ```
 PersonalizedRankPanel
   → profile readiness Alert (missing / thin)
-  → POST /api/recipes/recommend  (getUser, getProfile, optional getFridgeItems)
+  → POST /api/recipes/recommend  (getUser; getProfile ∥ getFridgeItems)
     → recommendRecipes()
          → detectIngredientsFromVideo()     [nếu có video]
-         → searchSpoonacularRecipes()       [cache spoonacular]
-         → enrichNutrition() → USDA         [nếu nutrition incomplete]
-         → rankRecipeCandidates()           [Gemini → cache; fallback heuristic]
+         → cache hit recommend:response?    [8 phút; key user+ingredients+profile]
+         → searchSpoonacularRecipes()       [~20 candidates; cache spoonacular]
+         → enrichNutrition() → USDA         [chỉ incomplete; max 8 recipes, parallel]
+         → rankRecipeCandidates()           [≤20 candidates; flash-lite first; cache]
     → JSON { recipes (+ id, instructions), detection?, ingredientsUsed }
-  → Expand card: show instructions; nếu thiếu → GET /api/recipes/[id] → getSpoonacularRecipeById
+  → Expand card (user-driven): show instructions; nếu thiếu → GET /api/recipes/[id]
   → Save: toRecommendedRecipeFromRanked() → POST /api/save-recipe → recipes.generated_recipe
   → /history
 ```
@@ -189,6 +190,12 @@ AI Suggest (secondary): `AiSuggestPanel` → `/api/generate-recipes` → có th�
 - Helper: `assessProfileForRanking` (`profile-rank-readiness.ts`)
 - Tests: `profile-rank-readiness.test.ts`, `recipes/[id]/route.test.ts`
 
+### Phase 7 notes (shipped — latency follow-up)
+
+- Whole-response cache: `buildRecommendResponseCacheKey` / `recommend:response`, TTL 8 phút
+- Leaner search (default 20, clamp 12–30), USDA enrich cap 8 + skip when complete
+- Rank prompt capped at 20 candidates; flash-lite first; no auto-expand detail GET
+
 ### Phase 9 notes (shipped)
 
 - Lint fix: `RankedRecipeCard` ref sync / effect setState
@@ -198,4 +205,4 @@ AI Suggest (secondary): `AiSuggestPanel` → `/api/generate-recipes` → có th�
 
 ---
 
-*Optimal feature pack COMPLETE. Phase 3 + 6–8 skipped by lock. Stop — no further phases.*
+*Optimal feature pack COMPLETE. Phase 3, 6, 8 skipped by lock; Phase 7 later shipped for latency.*

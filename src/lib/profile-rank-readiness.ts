@@ -6,7 +6,7 @@ export type ProfileRankReadiness =
   | { status: "ready" };
 
 /**
- * Whether the health profile has enough signals for Personalized Rank
+ * Whether the health profile has enough signals for personalized recommendations
  * (nutrition goals, activity, calories, body metrics used in ranking).
  */
 export function assessProfileForRanking(
@@ -16,7 +16,7 @@ export function assessProfileForRanking(
     return {
       status: "missing",
       message:
-        "Complete your health profile so Personalized Rank can factor in allergies, diet, and goals.",
+        "Complete your health profile so recommendations can factor in allergies, diet, and goals.",
     };
   }
 
